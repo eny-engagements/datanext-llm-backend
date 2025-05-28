@@ -22,3 +22,5 @@ sdv
 autogen
 setuptools
 
+setuptools
+

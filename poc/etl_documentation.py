@@ -804,8 +804,6 @@ def visualise_etl(plsql_script, report_name, df):
 
     image_path = f"./output/etl documentation/{report_name.replace(".txt", "").replace(".sql", "")} Lineage Diagram"
     diagram = Source(graphviz_code, engine='dot')
-    # diagram.render(image_path, format='png', view=False, cleanup=True)
-    # return f"{image_path}.png"
 
     error = True
     i = 0
@@ -969,9 +967,6 @@ if st.session_state['table_raw'] is not None:
             try:
                 create_etl_documentation_excel(st.session_state['table'], st.session_state['report_name'])
                 st.success("Excel sheet successfully saved in the local directory!")
-                # if st.session_state['image_path']:
-                #     os.remove(st.session_state['image_path'])
-                #     os.remove(st.session_state['image_path'].replace(".png", ""))
             except Exception as e:
                 st.error(f"The documentation could not be generated! Please try again -> {e}")
 
