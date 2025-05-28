@@ -1063,32 +1063,9 @@ if st.session_state['db_connection'] is not None:
                         db_data = db.table_data(command=str(st.session_state['agent_query']))
                         if db_data is not None:
                             metadata = db.table_metadata 
-
                             st.session_state['hci_data'] = db_data
-                            # st.session_state['metadata_dict'] = metadata
                             st.session_state['metadata'] = Metadata.load_from_dict(metadata)
                             st.session_state['stylised_hci_data'] = {k: v.style.highlight_null(color='yellow') for k, v in db_data.items()}
-
-                            # st.subheader("Generated SQL Query", divider='violet')
-                            # st.code(st.session_state['agent_query'], language='sql')
-
-                            # st.subheader("Validate Metadata", divider='violet')
-                            # st.json(st.session_state['metadata_dict'], expanded=False)
-                            # if st.button("Edit Metadata"):
-                            #     try:
-                            #         metadata = st.text_area("Edit Metadata", value=st.session_state['metadata'], height=400)
-                            #         if st.button("Save"):
-                            #             st.session_state['metadata_dict'] = metadata
-                            #             st.session_state['metadata'] = Metadata.load_from_dict(metadata)
-                            #         st.success("Changes saved successfully")
-                            #     except json.JSONDecodeError as e:
-                            #         st.error(f"Please provide valid metadata {e}")
-                            
-
-                            # st.subheader("Data fetched from Database", divider='violet')
-                            # for table_name, data in st.session_state['stylised_hci_data'].items():
-                            #     with st.expander(table_name):
-                            #         st.dataframe(data)
 
                         else:
                             st.warning("No data found")
@@ -1097,7 +1074,7 @@ if st.session_state['db_connection'] is not None:
                         st.warning("Attempts exhausted. Please try again.")
 
                 except Exception as e:
-                    # st.error(f"Error generating SQL query or fetching data: {e}")
+                    st.error(f"Error generating SQL query or fetching data: {e}")
                     pass
 
 if st.session_state['metadata'] is not None:
@@ -1262,8 +1239,6 @@ if st.session_state['synthetic_data'] is not None:
                 col1.metric("Overall Score", f"{"{:.2f}".format(diagnostics.get_score() * 100)}%")
                 col2.metric("Data Validity Score", f"{"{:.2f}".format(diagnostics_properties.loc[0, 'Score'] * 100)}%")
                 col3.metric("Data Structure Score", f"{"{:.2f}".format(diagnostics_properties.loc[1, 'Score'] * 100)}%")
-                st.text("\n\n")
-                # st.write("### Quantitative Analysis")
                 st.text("\n\n")
                 for table_name in st.session_state['synthetic_data'].keys():
                     if os.listdir(f"./output/synthetic data/{file_label}/{table_name}"):

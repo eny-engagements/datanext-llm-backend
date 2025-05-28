@@ -7,7 +7,6 @@ import os
 import pickle
 import tiktoken
 
-# from scripts.mapping_embed import create_index
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -31,8 +30,7 @@ llm = AzureChatOpenAI(
     max_tokens=4096
 )
 
-# hf_embeddings = HuggingFaceEmbeddings(model_name="C:/Users/TM781UW/huggingface/all-mpnet-base-v2/", model_kwargs={'trust_remote_code': True})
-hf_embeddings = SentenceTransformer("C:/Users/TM781UW/huggingface/all-mpnet-base-v2/", trust_remote_code=True)
+hf_embeddings = SentenceTransformer("./all-mpnet-base-v2/", trust_remote_code=True)
 encoding = tiktoken.get_encoding("cl100k_base")
 
 runnable = RunnablePassthrough()
@@ -96,32 +94,6 @@ def create_index(file):
         pickle.dump(table_data_list, f)
 
     return metadata_list, table_data_list
-
-def load_index(source_system_list):
-    source_system_details = {
-        "Life Asia": {
-            "METADATA_PATH": r"C:\Users\TM781UW\Documents\Projects\EY DataNext (GenAI for Data)\combined_POC\input\life_asia_with_metadata.pkl", 
-            "TABLE_DATA_PATH": r"C:\Users\TM781UW\Documents\Projects\EY DataNext (GenAI for Data)\combined_POC\input\life_asia_with_table_data.pkl" 
-        },
-        "C2S2": {
-            "METADATA_PATH": r"C:\Users\TM781UW\Documents\Projects\EY DataNext (GenAI for Data)\combined_POC\input\c2s2_with_metadata.pkl", 
-            "TABLE_DATA_PATH": r"C:\Users\TM781UW\Documents\Projects\EY DataNext (GenAI for Data)\combined_POC\input\c2s2_with_table_data.pkl" 
-        }
-    }
-
-    for source_system in source_system_list:
-        try:
-            with open(source_system_details[source_system]["METADATA_PATH"], "rb") as f:
-                metadata = pickle.load(f)
-                metadata_list.extend(metadata)
-            with open(source_system_details[source_system]["TABLE_DATA_PATH"], "rb") as f:
-                table_data = pickle.load(f)
-                table_data_list.extend(table_data)
-
-        except Exception as e:
-            st.error(f"Could not load indexes for {source_system}")
-            pass
-
 
 def search_glossary_entity(query, top_k=100):
     query_embedding = hf_embeddings.encode(query)
@@ -549,12 +521,6 @@ The outcome is an Excel Workbook containing a mapping table and the SQL query to
 
 with st.sidebar:
     st.write("### Source System")
-
-    source_system_list = st.multiselect("Select Source System", ["Life Asia", "C2S2"])
-    if source_system_list:
-        load_index(source_system_list)
-        st.success(f"Loaded index for {', '.join(source_system_list)} successfully!")
-
     source_file = st.file_uploader("Upload Dictionary of Source System")
     if source_file and st.session_state['base_mapping'] is None:
         with st.spinner("Indexing the Dictionary (This may take a while)..."):
@@ -576,18 +542,15 @@ aggregate_attributes = st.text_area("Please enter the derived attributes", heigh
 
 if metadata_list != [] and data_model_file is not None:
     if st.button("Map Source System to Base Attributes"):
-        # with st.spinner("Mapping Source to Target...."):
         base_mapping_df = create_mappings(data_model_file)
         if base_mapping_df is not None:
             st.session_state['base_mapping'] = base_mapping_df
         else:
             st.error("Something went wrong! Please try again.")
-            # st.dataframe(pd.concat(st.session_state['mapping_table'], ignore_index=True))
 
 if data_model_file and name.strip() != "" and aggregate_attributes.strip() != "":
     if st.button("Map Base Attributes to Aggregate Attributes"):
         st.session_state['aggregate_name'] = name
-        # st.session_state['aggregate_attributes'] = aggregate_attributes
 
         with st.spinner("Mapping Base to Aggregate...."):
             aggregate_mapping_df = create_aggregate_view(data_model_file, name, aggregate_attributes)
@@ -621,10 +584,9 @@ if st.session_state['base_mapping'] is not None:
 
 if st.session_state['aggregate_mapping'] is not None:
     st.subheader("Mapping and Queries", divider='violet')
-    st.dataframe(st.session_state['aggregate_mapping'])
-    # for _, row in st.session_state['aggregate_mapping'].iterrows():
-    #     st.write(f"**{row['Aggregate View Attribute']}**")
-    #     st.code(row['SQL Query'])
+    for _, row in st.session_state['aggregate_mapping'].iterrows():
+        st.write(f"**{row['Aggregate View Attribute']}**")
+        st.code(row['SQL Query'])
     # st.dataframe(st.session_state['aggregate_mapping'])
     if st.button("Save Mappings"):
         st.session_state['aggregate_mapping'].to_excel(f"./output/mapping/{st.session_state['aggregate_name']} mapping.xlsx", sheet_name='Mapping', header=True, index=False)
