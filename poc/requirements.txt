@@ -20,4 +20,5 @@ sentence_transformers
 sklearn
 sdv
 autogen
+setuptools
 
