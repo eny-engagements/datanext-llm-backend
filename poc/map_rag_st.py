@@ -87,10 +87,10 @@ def create_index(file):
     for future in futures:
         table_data_list.append(future.result())
 
-    with open(f"./input/{file.name.replace(".xlsx", "")}_metadata.pkl", 'wb') as f:
+    with open(f"./input/{file.name.replace('.xlsx', '')}_metadata.pkl", 'wb') as f:
         pickle.dump(metadata_list, f)
 
-    with open(f"./input/{file.name.replace(".xlsx", "")}_table_data.pkl", 'wb') as f:
+    with open(f"./input/{file.name.replace('.xlsx', '')}_table_data.pkl", 'wb') as f:
         pickle.dump(table_data_list, f)
 
     return metadata_list, table_data_list
@@ -332,11 +332,11 @@ def process_mapping_df(initial_mapping_df, pk):
 
     # print(f"Context:\n{context}\n\nMapping Rules:\n{included_mappings}\n\nQuery:\n{query}")
 
-    query_start_index = query.find("```sql")
-    query = query.replace("```sql", "")
-    query_end_index = query.find("```")
+    query_start_index = query.find('```sql')
+    query = query.replace('```sql', '')
+    query_end_index = query.find('```')
     if query_end_index != -1 and not mapping_df.empty:
-        mapping_df.iloc[0, mapping_df.columns.get_loc('Mapping Query')] = query[query_start_index:query_end_index].strip("```")
+        mapping_df.iloc[0, mapping_df.columns.get_loc('Mapping Query')] = query[query_start_index:query_end_index].strip('```')
         return mapping_df
     
     return None
@@ -357,7 +357,7 @@ def create_mappings(file):
     for entity in entities:
         entity_name = entity.loc[entity['Key'] == "pk", "Entity_Name"].values[0]
         entity_description = entity.loc[entity['Key'] == "pk", "Entity_Description"].values[0]
-        pk_name = entity.loc[entity['Key'] == "pk", "Attribute_Name"].values[0].replace("_no", " number").replace("_id", " identifier").replace("_", " ")
+        pk_name = entity.loc[entity['Key'] == "pk", "Attribute_Name"].values[0].replace('_no', ' number').replace('_id', ' identifier').replace('_', ' ')
         pk_description = entity.loc[entity['Key'] == "pk", "Attribute_Description"].values[0]
         num_attributes = entity.shape[0]
         total_results = 150
@@ -574,7 +574,7 @@ if st.session_state['base_mapping'] is not None:
     #     st.image(st.session_state['base_mapping_image'], caption="Mapping Diagram")
 
     if st.button("Save Mappings"):
-        st.session_state['base_mapping'].to_excel(f"./output/mapping/{data_model_file.name.replace(".xlsx", "")} mapping.xlsx", sheet_name='Mapping', header=True, index=False)
+        st.session_state['base_mapping'].to_excel(f"./output/mapping/{data_model_file.name.replace('.xlsx', '')} mapping.xlsx", sheet_name='Mapping', header=True, index=False)
         # if st.session_state['base_mapping_image'] is not None:
         #     wb = load_workbook(f"./output/mapping/{data_model_file.name.replace(".xlsx", "")} mapping.xlsx")
         #     ws = wb.create_sheet('Diagram')
