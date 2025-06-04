@@ -6,9 +6,11 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 import openpyxl
-from openpyxl import load_workbook, get_column_letter
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, PatternFill, Border, Side
 
+import tiktoken
 from langchain_openai import AzureChatOpenAI
 # from langchain_ollama.llms import OllamaLLM 
 from langchain_core.prompts import PromptTemplate
@@ -53,14 +55,6 @@ def read_schema(schema_file=None, schema_df=None, batch_size=20):
                 ddl_val = schema_df[(schema_df['Schema Name'] == schema) & (schema_df['Table Name'] == table)]['DDL'].values[0]
                 chunk += f"DDL: {ddl_val}\n"
             if has_column_name:
-                # columns = [
-                #     " ".join(col.split())
-                #     for col in schema_df[
-                #         (schema_df['Schema Name'] == schema) & (schema_df['Table Name'] == table)
-                #     ]['Column Name'].astype(str).tolist()
-                # ]
-                # if columns:
-                #     chunk += "Columns: " + ", ".join(columns) + "\n"
                 table_rows = schema_df[(schema_df['Schema Name'] == schema) & (schema_df['Table Name'] == table)]
                 columns = []
                 for _, row in table_rows.iterrows():
@@ -92,21 +86,30 @@ def ddl_description(chunk, schema_description):
     You will create a comprehensive business glossary from the given database information by reasoning step-by-step 
     based on the following instruction:
 
-    1. Table Description: For each table, generate an informative description by drawing context from the schema description as well as name 
-    and metadata of the attributes. Be authoritative and concise, using your expertise in the domain to provide a clear understanding of the 
-    table's purpose and relevance. Table descriptions should be succinct yet informative, capturing the essence of the data it holds and its role 
-    in the broader business context. Do not use generic terms or broad and vague descriptions; do not use words like "likely", "may", 
-    "appears to", "could", etc. Instead, use definitive language that reflects your expertise and understanding of the domain. 
+    1. Table Description: For each table, generate an informative description by drawing context from the schema description 
+    as well as name and metadata of the attributes. Be authoritative and concise, using your expertise in the domain to provide 
+    a clear understanding of the table's purpose and relevance. Table descriptions should be succinct yet informative, capturing 
+    the essence of the data it holds and its role in the broader business context. Do not use generic terms or broad and vague 
+    descriptions; do not use words like "likely", "may", "appears to", "could", etc. Instead, use definitive language that 
+    reflects your expertise and understanding of the domain. Do not mention the Table Name or Schema Name in the description.
 
-    2. Column Descriptions: List all columns for each table with comprehensive and business-centric definitions. Industry specific terminologies
-    and business concepts should be elaborated upon such that the reader finds the glossary useful for data engineering as well as business analytics.
-    Abbreviations should be expanded and explained, and acronyms should be defined. Do not use generic terms or broad and vague descriptions.
-    Ensure there is no redundancy in the descriptions. The description should be accompanied by the subject area or subdomain under the business domain
+    2. Column Descriptions: List all columns for each table with comprehensive and business-centric definitions. Industry 
+    specific terminologies and business concepts should be elaborated upon such that the reader finds the glossary useful for 
+    data engineering as well as business analytics. Abbreviations should be expanded and explained, and acronyms should be 
+    defined. Do not use generic terms or broad and vague descriptions. Ensure there is no redundancy in the descriptions. 
+    
+    3. Subdomain: The column description should be accompanied by the subject area or subdomain under the business domain
     that the data within the column pertains to. Subdomain name should be enclosed in brackets.
 
-    3. Infer meanings for incomplete or ambiguous names based on context from the metadata. 
+    4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
+    appending (pii) to the column description after the subdomain. If the column does not contain PII data, do not append (pii) to 
+    the column description.
 
-    4. Only describe the tables and columns listed below. Do not invent or add any that are not present.
+    5. Ambiguous Attributes: Infer meanings for incomplete or ambiguous names based on context from the schema description and 
+    metadata. However, a table may contain placeholder columns such as "col1", "col2", "EXTENSION_ATTRIBUTE_1", "JOB_INFORMATION_19",
+    etc. which should not be described.
+
+    6. Only describe the tables and columns listed below. Do not invent or add any that are not present.
 
     Schema Description:
     {schema_description}
@@ -122,7 +125,7 @@ def ddl_description(chunk, schema_description):
     - [Column 2 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n 
     ...
     - [Column n Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])
-    -------
+    ------
                                                     
     Do not include introductory or closing messages. After describing all columns, end your response with ------.
     """)
@@ -133,21 +136,30 @@ def ddl_description(chunk, schema_description):
     You created part of a comprehensive business glossary from the given database information by reasoning step-by-step 
     based on the following instruction:
 
-    1. Table Description: For each table, generate an informative description by drawing context from the schema description as well as name 
-    and metadata of the attributes. Be authoritative and concise, using your expertise in the domain to provide a clear understanding of the 
-    table's purpose and relevance. Table descriptions should be succinct yet informative, capturing the essence of the data it holds and its role 
-    in the broader business context. Do not use generic terms or broad and vague descriptions; do not use words like "likely", "may", 
-    "appears to", "could", etc. Instead, use definitive language that reflects your expertise and understanding of the domain. 
+    1. Table Description: For each table, generate an informative description by drawing context from the schema description 
+    as well as name and metadata of the attributes. Be authoritative and concise, using your expertise in the domain to provide 
+    a clear understanding of the table's purpose and relevance. Table descriptions should be succinct yet informative, capturing 
+    the essence of the data it holds and its role in the broader business context. Do not use generic terms or broad and vague 
+    descriptions; do not use words like "likely", "may", "appears to", "could", etc. Instead, use definitive language that 
+    reflects your expertise and understanding of the domain. Do not mention the Table Name or Schema Name in the description.
 
-    2. Column Descriptions: List all columns for each table with comprehensive and business-centric definitions. Industry specific terminologies
-    should be elaborated upon such that the reader finds the glossary useful for data engineering as well as business analytics.
-    Abbreviations should be expanded and explained, and acronyms should be defined. Do not use generic terms or broad and vague descriptions.
-    Ensure there is no redundancy in the descriptions. The description should be accompanied by the subject area or subdomain under the business domain
+    2. Column Descriptions: List all columns for each table with comprehensive and business-centric definitions. Industry 
+    specific terminologies and business concepts should be elaborated upon such that the reader finds the glossary useful for 
+    data engineering as well as business analytics. Abbreviations should be expanded and explained, and acronyms should be 
+    defined. Do not use generic terms or broad and vague descriptions. Ensure there is no redundancy in the descriptions. 
+    
+    3. Subdomain: The column description should be accompanied by the subject area or subdomain under the business domain
     that the data within the column pertains to. Subdomain name should be enclosed in brackets.
 
-    3. Infer meanings for incomplete or ambiguous names based on context from the metadata. 
+    4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
+    appending (pii) to the column description after the subdomain. If the column does not contain PII data, do not append (pii) to 
+    the column description.
 
-    4. Only describe the tables and columns listed below. Do not invent or add any that are not present.
+    5. Ambiguous Attributes: Infer meanings for incomplete or ambiguous names based on context from the schema description and 
+    metadata. However, a table may contain placeholder columns such as "col1", "col2", "EXTENSION_ATTRIBUTE_1", "JOB_INFORMATION_19",
+    etc. which should not be described.
+
+    6. Only describe the tables and columns listed below. Do not invent or add any that are not present.
 
     Schema Description:
     {schema_description}
@@ -158,7 +170,7 @@ def ddl_description(chunk, schema_description):
     Glossary generated so far:
     {glossary}
 
-    Continue from the last point and complete the glossary by providing definitions for the remaining columns.
+    Complete the glossary by providing definitions for the remaining columns.
 
     Use this format throughout:                          
     - [Remaining Column 1 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n  
@@ -178,16 +190,37 @@ def ddl_description(chunk, schema_description):
 
     glossary = chain.invoke({"schema_data": chunk, "schema_description": schema_description})
 
-    while not glossary.endswith("------"):
+    encoding = tiktoken.get_encoding("cl100k_base")
+    tokens = encoding.encode(glossary)
+
+    while not glossary.endswith("------") and len(tokens) < 15000:
         glossary_lines = glossary.split('\n')
-        if chunk.split(", ")[-1].split(" (")[0] != glossary_lines[-1].split(": ")[0].strip("- "):
-            glossary = '\n'.join(glossary_lines[:-1])
-        else:
-            glossary_lines[-1] = glossary_lines[-1].split(": ")[0] + "Could not be generated.\n------"
+
+        if re.match(r"^-{2,5}$", glossary_lines[-1].strip()):
+            break
+        if chunk.split(", ")[-1].split(" (")[0] == glossary_lines[-1].split(": ")[0].strip("- "):
+            if not glossary_lines[-1].endswith(")"):
+                glossary_lines[-1] = glossary_lines[-1].split(": ")[0] + "Could not be generated."
+            glossary_lines.append("------")
             glossary = '\n'.join(glossary_lines)
             break
+
+        # glossary_lines = glossary_lines[:-1]
+        # glossary = '\n'.join(glossary_lines)
+        # last_col_name = glossary_lines[-1].split(": ")[0].strip("- ")
+        # remaining_columns = []
+        # for col in reversed(chunk.split(", ")):
+        #     col_name = col.split(" (")[0].strip()
+        #     if col_name == last_col_name:
+        #         break
+        #     remaining_columns.append(col)
+        # remaining_columns.reverse()
+        # remaining_chunk = ", ".join(remaining_columns)
+
+        # continued_glossary = continue_chain.invoke({"schema_data": chunk, "remaining_chunk": remaining_chunk, "schema_description": schema_description})
         continued_glossary = continue_chain.invoke({"schema_data": chunk, "glossary": glossary, "schema_description": schema_description})
         glossary += f"\n{continued_glossary}"
+        tokens = encoding.encode(glossary)
 
     return glossary
 
@@ -202,6 +235,7 @@ def generate_glossary_ddl(schema_info, schema_description):
     glossaries.extend([future.result() for future in futures])
 
     glossary = "  \n".join(glossaries)
+    print("Done")
     return glossary
     
 def create_business_glossary_dataframe(glossary):
@@ -228,15 +262,17 @@ def create_business_glossary_dataframe(glossary):
             if len(column_detail) > 1:
                 column_name = column_detail[0].strip('-').strip()
                 desc = column_detail[1].strip()
-                # Extract description and subdomain using regex
-                match = re.match(r'^(.*)\s+\(([^()]*)\)\s*$', desc)
+                # Extract description, subdomain, and pii using regex
+                match = re.match(r'^(.*?)(?:\s+\(([^()]*)\))?(?:\s+\(pii\))?$', desc, re.IGNORECASE)
                 if match:
-                    column_description = match.group(1).strip()
-                    column_subdomain = match.group(2).strip()
+                    column_description = match.group(1)
+                    column_subdomain = match.group(2)
+                    pii = "Yes" if "(pii)" in desc.lower() else "No"
                 else:
                     column_description = desc
                     column_subdomain = ""
-                current_table['columns'].append((column_name, column_description, column_subdomain))
+                    pii = "No"
+                current_table['columns'].append((column_name, column_description, column_subdomain, pii))
             else:
                 print(f"Skipping improperly formatted line: {line.strip()}")
     if current_table:
@@ -250,22 +286,22 @@ def create_business_glossary_dataframe(glossary):
         table_name = table['table_name']
         table_description = table['description']
         columns = table['columns']
-        for column_name, column_description, column_subdomain in columns:
+        for column_name, column_description, column_subdomain, pii in columns:
             extra_values = []
             for field in optional_fields:
                 val = ""
-                match_row = schema_df[
-                    (schema_df['Schema Name'] == schema_name) &
-                    (schema_df['Table Name'] == table_name) &
-                    (schema_df['Column Name'] == column_name)
+                match_row = st.session_state['schema_df'][
+                    (st.session_state['schema_df']['Schema Name'] == schema_name) &
+                    (st.session_state['schema_df']['Table Name'] == table_name) &
+                    (st.session_state['schema_df']['Column Name'] == column_name)
                 ]
                 if not match_row.empty:
                     val = str(match_row.iloc[0][field])
                 extra_values.append(val)
-            row = [schema_name, table_name, table_description, column_name, column_description, column_subdomain] + extra_values
+            row = [schema_name, table_name, table_description, column_name, column_description, column_subdomain, pii] + extra_values
             rows.append(row)
-    
-    columns_list = ['Schema Name', 'Table Name', 'Table Description', 'Column Name', 'Column Description', 'Column Subdomain'] + optional_fields
+
+    columns_list = ['Schema Name', 'Table Name', 'Table Description', 'Column Name', 'Column Description', 'Column Subdomain', 'PII'] + optional_fields
     glossary_df = pd.DataFrame(rows, columns=columns_list)
 
     glossary_df = glossary_df.drop_duplicates(subset=['Schema Name', 'Table Name', 'Column Name'], keep='first')
@@ -307,11 +343,12 @@ def create_business_glossary_excel(schema_name, schema_df):
     # Set column widths dynamically, but keep your preferred widths for known columns
     col_widths = {
         "Schema Name": 26,
-        "Table Name": 30,
-        "Table Description": 26,
-        "Column Name": 30,
-        "Column Description": 26,
+        "Table Name": 26,
+        "Table Description": 36,
+        "Column Name": 26,
+        "Column Description": 36,
         "Column Subdomain": 26,
+        "PII": 8
     }
     for idx, col_name in enumerate(schema_df.columns, 1):
         width = col_widths.get(col_name, 20)
@@ -476,10 +513,11 @@ if schema_description and st.session_state['schema_info_batches'] != []:
         if st.button("Create Business Glossary Excel Sheet"):
             file_path = create_business_glossary_excel(schema_name, st.session_state['glossary_df'])
             if st.session_state['missing_schema_df'] is not None:
-                st.session_state['missing_schema_df'].to_excel(file_path, sheet_name="Unknown Attributes", index=False)
+                with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    st.session_state['missing_schema_df'].to_excel(writer, sheet_name="Unknown Attributes", index=False)
             st.success("Business Glossary Excel sheet ready for download! Please proceed")
-            st.session_state['glossary'] = ""
-            st.session_state['glossary_continuation'] = ""
+            # st.session_state['glossary'] = ""
+            # st.session_state['glossary_continuation'] = ""
             with open(file_path, "rb") as f:
                 st.download_button(
                     label="Download Business Glossary Excel Sheet",

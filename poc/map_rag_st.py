@@ -36,8 +36,8 @@ encoding = tiktoken.get_encoding("cl100k_base")
 runnable = RunnablePassthrough()
 output_parser = StrOutputParser()
 
-metadata_list = []
-table_data_list = []
+# metadata_list = []
+# table_data_list = []
 
 def create_embeddings(row):
     metadata = {
@@ -87,10 +87,13 @@ def create_index(file):
     for future in futures:
         table_data_list.append(future.result())
 
-    with open(f"./input/{file.name.replace('.xlsx', '')}_metadata.pkl", 'wb') as f:
+    if not os.path.exists("./input/mapping/"):
+        os.makedirs("./input/mapping/")
+
+    with open(f"./input/mapping/{file.name.replace('.xlsx', '')}_metadata.pkl", 'wb') as f:
         pickle.dump(metadata_list, f)
 
-    with open(f"./input/{file.name.replace('.xlsx', '')}_table_data.pkl", 'wb') as f:
+    with open(f"./input/mapping/{file.name.replace('.xlsx', '')}_table_data.pkl", 'wb') as f:
         pickle.dump(table_data_list, f)
 
     return metadata_list, table_data_list
@@ -481,12 +484,12 @@ def create_aggregate_view(file, name, aggregate_attributes):
         return None
 
 # Streamlit Interface
-# if 'is_indexed' not in st.session_state:
-#     st.session_state['is_indexed'] = False
+if 'indexeed_files' not in st.session_state:
+    st.session_state['indexed_files'] = set()
 if 'metadata_list' not in st.session_state:
-    st.session_state['metadata_list'] = None
+    st.session_state['metadata_list'] = []
 if 'table_data_list' not in st.session_state:
-    st.session_state['table_data_list'] = None
+    st.session_state['table_data_list'] = []
 if 'base_mapping' not in st.session_state:
     st.session_state['base_mapping'] = None
 if 'base_mapping_image' not in st.session_state:
@@ -522,15 +525,18 @@ The outcome is an Excel Workbook containing a mapping table and the SQL query to
 with st.sidebar:
     st.write("### Source System")
     source_file = st.file_uploader("Upload Dictionary of Source System")
-    if source_file and st.session_state['base_mapping'] is None:
+
+    # Only index if a new file is uploaded and not already indexed
+    if (
+        source_file
+        and source_file.name not in st.session_state['indexed_files']
+    ):
         with st.spinner("Indexing the Dictionary (This may take a while)..."):
-            new_metadata_list, new_table_data_list = create_index(source_file)
-            if new_metadata_list and new_table_data_list:
-                metadata_list.extend(new_metadata_list)
-                st.session_state['metadata_list'] = metadata_list
-                table_data_list.extend(new_table_data_list)
-                st.session_state['table_data_list'] = table_data_list
-                st.session_state['is_indexed'] = True
+            metadata_list, table_data_list = create_index(source_file)
+            if len(metadata_list) > 0 and len(table_data_list) > 0:
+                st.session_state['metadata_list'].extend(metadata_list)
+                st.session_state['table_data_list'].extend(table_data_list)
+                st.session_state['indexed_files'].add(source_file.name)
                 st.success(f"Index created for {source_file.name}")
 
 st.write("#### Base Model")
@@ -540,7 +546,7 @@ st.write("#### Aggregate Model")
 name = st.text_input("Please enter the name of the aggregated view")
 aggregate_attributes = st.text_area("Please enter the derived attributes", height=200)
 
-if metadata_list != [] and data_model_file is not None:
+if data_model_file and st.session_state['metadata_list'] != [] and st.session_state['base_mapping'] is None:
     if st.button("Map Source System to Base Attributes"):
         base_mapping_df = create_mappings(data_model_file)
         if base_mapping_df is not None:
