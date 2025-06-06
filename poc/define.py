@@ -102,8 +102,13 @@ def ddl_description(chunk, schema_description):
     that the data within the column pertains to. Subdomain name should be enclosed in brackets.
 
     4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
-    appending (pii) to the column description after the subdomain. If the column does not contain PII data, do not append (pii) to 
-    the column description.
+    appending (pii) to the column description after the subdomain. PII is generally classified under 3 levels. A level 1 PII is
+    not sensitive in itself. Only when the table contains other attributes that can be aggregated along with a level 1 PII 
+    attribute to heighten sensitivity, should it be classified as PII. A level 2 PII is generally information available in public
+    domain but can be used to identify a person, for e.g., contact information of a person. Level 2 PII is in itself is classified 
+    as PII. Level 3 PII is highly sensitive information such as financial account number, national identifiers such as Aadhar Number,
+    etc. If the column does not contain PII, or a level 1 PII when no other attributes are present in the table which may be aggregated to
+    heighten sensitivity, do not append (pii) to the column description.
 
     5. Ambiguous Attributes: Infer meanings for incomplete or ambiguous names based on context from the schema description and 
     metadata. However, a table may contain placeholder columns such as "col1", "col2", "EXTENSION_ATTRIBUTE_1", "JOB_INFORMATION_19",
@@ -152,8 +157,13 @@ def ddl_description(chunk, schema_description):
     that the data within the column pertains to. Subdomain name should be enclosed in brackets.
 
     4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
-    appending (pii) to the column description after the subdomain. If the column does not contain PII data, do not append (pii) to 
-    the column description.
+    appending (pii) to the column description after the subdomain. PII is generally classified under 3 levels. A level 1 PII is
+    not sensitive in itself. Only when the table contains other attributes that can be aggregated along with a level 1 PII 
+    attribute to heighten sensitivity, should it be classified as PII. A level 2 PII is generally information available in public
+    domain but can be used to identify a person, for e.g., contact information of a person. Level 2 PII is in itself is classified 
+    as PII. Level 3 PII is highly sensitive information such as financial account number, national identifiers such as Aadhar Number,
+    etc. If the column does not contain PII, or a level 1 PII when no other attributes are present in the table which may be aggregated to
+    heighten sensitivity, do not append (pii) to the column description.
 
     5. Ambiguous Attributes: Infer meanings for incomplete or ambiguous names based on context from the schema description and 
     metadata. However, a table may contain placeholder columns such as "col1", "col2", "EXTENSION_ATTRIBUTE_1", "JOB_INFORMATION_19",

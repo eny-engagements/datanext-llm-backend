@@ -2,11 +2,11 @@ import streamlit as st
 
 discover_page = st.Page("discover.py", title="Discover.ai", icon="🔍")
 define_page = st.Page("define.py", title="Define.ai", icon="📖") 
-document_page = st.Page("etl_documentation.py", title="LineageExtractor.ai", icon="📝") 
+document_page = st.Page("lineageextractor.py", title="LineageExtractor.ai", icon="📝") 
 model_page = st.Page("model.py", title="Model.ai", icon="🧬")
-map_page = st.Page("map_rag_st.py", title="Map.ai", icon="↔️")
+map_page = st.Page("map.py", title="Map.ai", icon="↔️")
 govern_page = st.Page("govern.py", title="Govern.ai", icon="✅")
-test_page = st.Page("synthesize_sql.py", title="Test.ai", icon="🧪")
+test_page = st.Page("test.py", title="Test.ai", icon="🧪")
 converse_page = st.Page("converse.py", title="Converse.ai", icon="💬")
 storyteller_page = st.Page("storyteller.py", title="Storyteller.ai", icon="📊") 
 
