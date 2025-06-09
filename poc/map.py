@@ -15,7 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
-from graphviz import Digraph
+# from graphviz import Digraph
 
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
@@ -36,8 +36,6 @@ encoding = tiktoken.get_encoding("cl100k_base")
 runnable = RunnablePassthrough()
 output_parser = StrOutputParser()
 
-# metadata_list = []
-# table_data_list = []
 
 def create_embeddings(row):
     metadata = {
@@ -67,6 +65,7 @@ def create_index(file):
     except Exception as e:
         print(e)
 
+    metadata_list = []
     with ThreadPoolExecutor(max_workers=30) as executor:
         futures = []
         for _, row in df.iterrows():
@@ -77,7 +76,7 @@ def create_index(file):
         metadata_list.append(future.result())
 
     table_df = df.groupby(['Table Name'])[['Table Name', 'Table Description']].first()
-
+    table_data_list = []
     with ThreadPoolExecutor(max_workers=30) as executor:
         futures = []
         for _, row in table_df.iterrows():
@@ -103,7 +102,7 @@ def search_glossary_entity(query, top_k=100):
     table_list = []
     similarity_score_list = []
     results = []
-    for metadata in table_data_list:
+    for metadata in st.session_state['table_data_list']:
         stored_embeddings = metadata.get("table_description_embedding")
         table = metadata.get("table")
         if table not in table_list:
@@ -115,14 +114,14 @@ def search_glossary_entity(query, top_k=100):
     
     # upper_quartile = np.percentile(similarity_score_list, 75)
     
-    if len(results) > 0:
+    if len(similarity_score_list) > 0 and len(results) > 0:
         results.sort(key=lambda item: item[1], reverse=True)
         # return [table for table, value in results[:top_k] if value >= upper_quartile]
         return [table for table, _ in results[:top_k]]
 
     return None
 
-def search_glossary_attribute(query, source_entities, top_k=5):
+def search_glossary_attribute(query, source_entities, metadata_list, top_k=5):
     query_embedding = hf_embeddings.encode(query)
     similarity_score_list = []
     results = []
@@ -134,15 +133,15 @@ def search_glossary_attribute(query, source_entities, top_k=5):
             results.append((metadata, similarity_score))
             similarity_score_list.append(similarity_score)
 
-    upper_quartile = np.percentile(similarity_score_list, 75)
+    if len(similarity_score_list) > 0 and len(results) > 0:
+        upper_quartile = np.percentile(similarity_score_list, 75)
 
-    if len(results) > 0:
         results.sort(key=lambda item: item[1], reverse=True)
         return '\n'.join([f"{result['table']} | {result['table_description']} | {result['column']} | {result['column_description']}" for result, value in results[:top_k] if value >= upper_quartile])
 
     return None
 
-def search_glossary_pk(source_entity, pk_description, top_k=3):
+def search_glossary_pk(source_entity, pk_description, metadata_list, top_k=3):
     query_embedding = hf_embeddings.encode(pk_description)
     similarity_score_list = []
     results = []
@@ -154,15 +153,15 @@ def search_glossary_pk(source_entity, pk_description, top_k=3):
             results.append((metadata, similarity_score))
             similarity_score_list.append(similarity_score)
         
-    upper_quartile = np.percentile(similarity_score_list, 95)
-
-    if len(results) > 0:
+    if len(similarity_score_list) > 0 and len(results) > 0:
+        upper_quartile = np.percentile(similarity_score_list, 95)
+        
         results.sort(key=lambda item: item[1], reverse=True)
         return '\n'.join([f"{result['table']} | {result['table_description']} | {result['column']} | {result['column_description']}" for result, value in results[:top_k] if value >= upper_quartile])
 
     return None
 
-def process_future_result(future, pk_name, pk_description):
+def process_future_result(future, pk_name, pk_description, metadata_list):
     # source_attributes, attribute = future.result()
     attribute, source_attributes = future.result()
     # pk_dict = {}
@@ -172,7 +171,7 @@ def process_future_result(future, pk_name, pk_description):
     if source_attributes is not None:
         for source_attribute in source_attributes.split('\n'):
             result_elements = source_attribute.split(' | ')
-            pk_source_entities = search_glossary_pk(result_elements[0], pk_description)
+            pk_source_entities = search_glossary_pk(result_elements[0], pk_description, metadata_list)
             if pk_source_entities is not None:
                 for pk_source_entity in pk_source_entities.split('\n'):
                     if all(pk_word in pk_source_entity.split(' | ')[3] for pk_word in pk_name.split()) and (
@@ -180,7 +179,7 @@ def process_future_result(future, pk_name, pk_description):
                         or "unique" in pk_source_entity.split(' | ')[3].lower()
                     ):
                         row_values = [
-                            "Silver",
+                            "Schema",
                             result_elements[0],
                             result_elements[1], 
                             result_elements[2], 
@@ -344,7 +343,7 @@ def process_mapping_df(initial_mapping_df, pk):
     
     return None
 
-def create_mappings(file):
+def create_mappings(file, metadata_list):
     c360_df = pd.read_excel(file)
     c360_df = c360_df.fillna('')
     c360_df['Key'] = c360_df['Key'].str.lower()
@@ -376,14 +375,15 @@ def create_mappings(file):
                             attr, search_glossary_attribute(
                                 attr['Attribute_Description'],
                                 source_entities,
-                                total_results_per_attribute
+                                metadata_list,
+                                top_k=total_results_per_attribute
                             )
                         ), attribute
                     )
                     futures.append(future)
         
         with ThreadPoolExecutor(max_workers=20) as executor:
-            processing_futures = [executor.submit(process_future_result, future, pk_name, pk_description) for future in futures]
+            processing_futures = [executor.submit(process_future_result, future, pk_name, pk_description, metadata_list) for future in futures]
             for processing_future in as_completed(processing_futures):
                 all_rows.extend(processing_future.result())
         
@@ -418,28 +418,28 @@ def create_mappings(file):
 
     return pd.concat(mapping_df_list, ignore_index=True)
 
-def create_entity_label(entity, attributes):
-    return f"{entity}\\n" + "\\l".join(attributes) + "\\l"
+# def create_entity_label(entity, attributes):
+#     return f"{entity}\\n" + "\\l".join(attributes) + "\\l"
 
-def visualise_mapping(df, name):
-    dot = Digraph(node_attr={'shape': 'box', 'style': 'filled'})
-    source_entities = df.groupby('Source Entity')['Source Attribute'].apply(list).to_dict()
-    target_entities = df.groupby('Target Entity')['Target Attribute'].apply(list).to_dict()
+# def visualise_mapping(df, name):
+#     dot = Digraph(node_attr={'shape': 'box', 'style': 'filled'})
+#     source_entities = df.groupby('Source Entity')['Source Attribute'].apply(list).to_dict()
+#     target_entities = df.groupby('Target Entity')['Target Attribute'].apply(list).to_dict()
 
-    source_color = '#D0E8FF'  # Light orange
-    target_color = '#B3DE69'  # Light green
+#     source_color = '#D0E8FF'  # Light orange
+#     target_color = '#B3DE69'  # Light green
 
-    for entity, attributes in source_entities.items():
-        dot.node(entity, create_entity_label(entity, attributes), fillcolor=source_color)
+#     for entity, attributes in source_entities.items():
+#         dot.node(entity, create_entity_label(entity, attributes), fillcolor=source_color)
 
-    for entity, attributes in target_entities.items():
-        dot.node(entity, create_entity_label(entity, attributes), fillcolor=target_color)
+#     for entity, attributes in target_entities.items():
+#         dot.node(entity, create_entity_label(entity, attributes), fillcolor=target_color)
 
-    for _, row in df.iterrows():
-        dot.edge(row['Source Entity'], row['Target Entity'], color='gray')
+#     for _, row in df.iterrows():
+#         dot.edge(row['Source Entity'], row['Target Entity'], color='gray')
 
-    dot.render(f"./output/mapping/{name} mapping", format='png', cleanup=True)
-    return f"./output/mapping/{name} mapping.png"
+#     dot.render(f"./output/mapping/{name} mapping", format='png', cleanup=True)
+#     return f"./output/mapping/{name} mapping.png"
 
 aggregation_prompt = PromptTemplate.from_template(
 """ 
@@ -484,7 +484,7 @@ def create_aggregate_view(file, name, aggregate_attributes):
         return None
 
 # Streamlit Interface
-if 'indexeed_files' not in st.session_state:
+if 'indexed_files' not in st.session_state:
     st.session_state['indexed_files'] = set()
 if 'metadata_list' not in st.session_state:
     st.session_state['metadata_list'] = []
@@ -548,7 +548,7 @@ aggregate_attributes = st.text_area("Please enter the derived attributes", heigh
 
 if data_model_file and st.session_state['metadata_list'] != [] and st.session_state['base_mapping'] is None:
     if st.button("Map Source System to Base Attributes"):
-        base_mapping_df = create_mappings(data_model_file)
+        base_mapping_df = create_mappings(data_model_file, st.session_state['metadata_list'])
         if base_mapping_df is not None:
             st.session_state['base_mapping'] = base_mapping_df
         else:

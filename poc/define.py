@@ -98,11 +98,11 @@ def ddl_description(chunk, schema_description):
     data engineering as well as business analytics. Abbreviations should be expanded and explained, and acronyms should be 
     defined. Do not use generic terms or broad and vague descriptions. Ensure there is no redundancy in the descriptions. 
     
-    3. Subdomain: The column description should be accompanied by the subject area or subdomain under the business domain
-    that the data within the column pertains to. Subdomain name should be enclosed in brackets.
+    3. Subject Area: The column description should be accompanied by the subject area under the business domain that the 
+    data within the column pertains to. Subject area name should be enclosed in brackets.
 
     4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
-    appending (pii) to the column description after the subdomain. PII is generally classified under 3 levels. A level 1 PII is
+    appending (pii) to the column description after the subject area. PII is generally classified under 3 levels. A level 1 PII is
     not sensitive in itself. Only when the table contains other attributes that can be aggregated along with a level 1 PII 
     attribute to heighten sensitivity, should it be classified as PII. A level 2 PII is generally information available in public
     domain but can be used to identify a person, for e.g., contact information of a person. Level 2 PII is in itself is classified 
@@ -126,10 +126,10 @@ def ddl_description(chunk, schema_description):
     Schema: [Schema Name]\n
     Table: [Table Name]\n
     Description: [Concise description of the table]\n                            
-    - [Column 1 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n  
-    - [Column 2 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n 
+    - [Column 1 Name]: [Comprehensive and business-centric definition for the column] ([Subject Area])\n  
+    - [Column 2 Name]: [Comprehensive and business-centric definition for the column] ([Subject Area])\n 
     ...
-    - [Column n Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])
+    - [Column n Name]: [Comprehensive and business-centric definition for the column] ([Subject Area])
     ------
                                                     
     Do not include introductory or closing messages. After describing all columns, end your response with ------.
@@ -153,11 +153,11 @@ def ddl_description(chunk, schema_description):
     data engineering as well as business analytics. Abbreviations should be expanded and explained, and acronyms should be 
     defined. Do not use generic terms or broad and vague descriptions. Ensure there is no redundancy in the descriptions. 
     
-    3. Subdomain: The column description should be accompanied by the subject area or subdomain under the business domain
-    that the data within the column pertains to. Subdomain name should be enclosed in brackets.
+    3. Subject Area: The column description should be accompanied by the subject area under the business domain that the 
+    data within the column pertains to. Subject area name should be enclosed in brackets.
 
     4. PII: The column description should also indicate if the column contains PII (Personally Identifiable Information) data by
-    appending (pii) to the column description after the subdomain. PII is generally classified under 3 levels. A level 1 PII is
+    appending (pii) to the column description after the subject area. PII is generally classified under 3 levels. A level 1 PII is
     not sensitive in itself. Only when the table contains other attributes that can be aggregated along with a level 1 PII 
     attribute to heighten sensitivity, should it be classified as PII. A level 2 PII is generally information available in public
     domain but can be used to identify a person, for e.g., contact information of a person. Level 2 PII is in itself is classified 
@@ -183,10 +183,10 @@ def ddl_description(chunk, schema_description):
     Complete the glossary by providing definitions for the remaining columns.
 
     Use this format throughout:                          
-    - [Remaining Column 1 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n  
-    - [Remaining Column 2 Name]: [Comprehensive and business-centric definition for the column] ([Subdomain])\n 
+    - [Remaining Column 1 Name]: [Comprehensive and business-centric definition for the column] ([Subject Area])\n  
+    - [Remaining Column 2 Name]: [Comprehensive and business-centric definition for the column] ([Subject Area])\n 
     ...
-    - [Remaining Column n Name]: [Comprehensive and business-centric definition for the column] ([Subdomain]) 
+    - [Remaining Column n Name]: [Comprehensive and business-centric definition for the column] ([Subject Area]) 
     ------
                                                     
     Do not include introductory or closing messages. After describing all columns, end your response with ------.
@@ -272,17 +272,17 @@ def create_business_glossary_dataframe(glossary):
             if len(column_detail) > 1:
                 column_name = column_detail[0].strip('-').strip()
                 desc = column_detail[1].strip()
-                # Extract description, subdomain, and pii using regex
+                # Extract description, subject area, and pii using regex
                 match = re.match(r'^(.*?)(?:\s+\(([^()]*)\))?(?:\s+\(pii\))?$', desc, re.IGNORECASE)
                 if match:
                     column_description = match.group(1)
-                    column_subdomain = match.group(2)
+                    subject_area = match.group(2)
                     pii = "Yes" if "(pii)" in desc.lower() else "No"
                 else:
                     column_description = desc
-                    column_subdomain = ""
+                    subject_area = ""
                     pii = "No"
-                current_table['columns'].append((column_name, column_description, column_subdomain, pii))
+                current_table['columns'].append((column_name, column_description, subject_area, pii))
             else:
                 print(f"Skipping improperly formatted line: {line.strip()}")
     if current_table:
@@ -296,7 +296,7 @@ def create_business_glossary_dataframe(glossary):
         table_name = table['table_name']
         table_description = table['description']
         columns = table['columns']
-        for column_name, column_description, column_subdomain, pii in columns:
+        for column_name, column_description, subject_area, pii in columns:
             extra_values = []
             for field in optional_fields:
                 val = ""
@@ -308,10 +308,10 @@ def create_business_glossary_dataframe(glossary):
                 if not match_row.empty:
                     val = str(match_row.iloc[0][field])
                 extra_values.append(val)
-            row = [schema_name, table_name, table_description, column_name, column_description, column_subdomain, pii] + extra_values
+            row = [schema_name, table_name, table_description, column_name, column_description, subject_area, pii] + extra_values
             rows.append(row)
 
-    columns_list = ['Schema Name', 'Table Name', 'Table Description', 'Column Name', 'Column Description', 'Column Subdomain', 'PII'] + optional_fields
+    columns_list = ['Schema Name', 'Table Name', 'Table Description', 'Column Name', 'Column Description', 'Column Subject Area', 'PII'] + optional_fields
     glossary_df = pd.DataFrame(rows, columns=columns_list)
 
     glossary_df = glossary_df.drop_duplicates(subset=['Schema Name', 'Table Name', 'Column Name'], keep='first')
@@ -357,7 +357,7 @@ def create_business_glossary_excel(schema_name, schema_df):
         "Table Description": 36,
         "Column Name": 26,
         "Column Description": 36,
-        "Column Subdomain": 26,
+        "Subject Area": 26,
         "PII": 8
     }
     for idx, col_name in enumerate(schema_df.columns, 1):
