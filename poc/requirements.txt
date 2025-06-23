@@ -21,6 +21,7 @@ sklearn
 sdv
 autogen
 setuptools
-
-setuptools
 databricks-sql-connector[pyarrow]
+langgraph
+fastapi
+python-multipart
