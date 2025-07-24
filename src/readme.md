@@ -1,3 +1,5 @@
+
+Go to Src folder
 Run uvicorn main:app --reload.
 Go to http://127.0.0.1:8000/docs.
 Call GET /new_session and copy the session_id.
