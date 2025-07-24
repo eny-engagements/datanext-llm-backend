@@ -607,73 +607,157 @@ def chunk_schema(schema_data):
     return schema_batches
 
 
-def update_unity(df, selected_connection, session_state):
+import pandas as pd
+import traceback
+
+def update_unity(engine, catalog: str, schema_list: list, df: pd.DataFrame) -> tuple[int, list]:
     """
-    Applies table-level and column-level comments to Unity Catalog using the Databricks SQL connector.
+    Applies table-level and column-level comments to Unity Catalog.
+    This is a helper function designed to be called by an agent tool.
+    
+    Args:
+        engine: The Databricks SQL connection object.
+        catalog (str): The name of the catalog to update.
+        schema_list (list): A list of schemas that the comments belong to.
+        df (pd.DataFrame): The DataFrame containing the glossary.
+                           Must have columns: 'Table', 'Column', 'Definition', 'Table Description'.
+
+    Returns:
+        A tuple containing (success_count, failed_comments_list).
     """
+    success_count = 0
+    failed_comments = []
+    updated_tables = set()
+
+    if 'Table Description' not in df.columns:
+        df['Table Description'] = None
+
+    cursor = None # Initialize cursor to None
     try:
-        engine = session_state['connections'][selected_connection]['engine']
-        catalog = session_state['selected_catalog']
-        schema_list = session_state['selected_schemas_per_connection'][selected_connection]
-
-        success_count = 0
-        failed_comments = []
-        updated_tables = set()  # track tables already updated with table-level description
-
+        # --- FIX IS HERE ---
+        # The 'engine' object is already the connection. Get the cursor directly from it.
         cursor = engine.cursor()
 
         for _, row in df.iterrows():
-            schema = None
-
-            # Detect schema from fully qualified table name
-            for possible_schema in schema_list:
-                if row['Table'].startswith(possible_schema + "."):
-                    schema = possible_schema
-                    # print("schema", schema)
-                    table_name = row['Table'].split(".")[1]
-                    break
-
-            if not schema:
-                schema = schema_list[0]  # fallback
-                # print("schema ###", schema)
-                table_name = row['Table']
-                # print("table name" , table_name)
-
+            table_name_raw = row['Table']
             column_name = row['Column']
-            comment_text = row['Definition'].replace("'", "")  # escape single quotes
-            table_description = row['Table Description'].replace("'", "")  # escape quotes
+            print("tablename" , table_name_raw)
+            print("columnname", column_name)
+            comment_text = str(row['Definition']).replace("'", "''") 
+            table_description = str(row.get('Table Description', '')).replace("'", "''")
 
-            fq_table = f"{catalog}.{table_name}"
-            # print("table path" , fq_table)
+            table_schema = None
+            clean_table_name = None
 
-            # Step 1: Set table-level comment (only once per table)
-            if fq_table not in updated_tables:
+            for s in schema_list:
+                if str(table_name_raw).lower().startswith(f"{s.lower()}."):
+                    table_schema = s
+                    clean_table_name = table_name_raw.split('.', 1)[1]
+                    break
+            
+            if not table_schema:
+                table_schema = schema_list[0]
+                clean_table_name = table_name_raw
+
+            fq_table = f"{catalog}.{clean_table_name}"
+            print("fq_table", fq_table)
+            # Set table-level comment
+            if fq_table not in updated_tables and table_description and pd.notna(row.get('Table Description')):
                 try:
                     table_comment_query = f"""COMMENT ON TABLE {fq_table} IS '{table_description}'"""
-                    # print(f"[TABLE] {table_comment_query}")
                     cursor.execute(table_comment_query)
                     updated_tables.add(fq_table)
                 except Exception as e:
-                    failed_comments.append((table_name, "[TABLE_DESC]", str(e)))
+                    failed_comments.append((fq_table, "[TABLE_DESC]", str(e)))
 
-            # Step 2: Set column-level comment
-            try:
-                col_comment_query = f"""COMMENT ON COLUMN {fq_table}.{column_name} IS '{comment_text}'"""
-                # print(f"[COLUMN] {col_comment_query}")
-                cursor.execute(col_comment_query)
-                success_count += 1
-            except Exception as e:
-                failed_comments.append((table_name, column_name, str(e)))
+            # Set column-level comment
+            if pd.notna(column_name) and comment_text:
+                try:
+                    col_comment_query = f"""COMMENT ON COLUMN {fq_table}.`{column_name}` IS '{comment_text}'"""
+                    cursor.execute(col_comment_query)
+                    success_count += 1
+                except Exception as e:
+                    failed_comments.append((fq_table, column_name, str(e)))
 
-        cursor.close()
         return success_count, failed_comments
 
     except Exception as e:
+        traceback.print_exc()
         return 0, [("GENERAL_ERROR", "N/A", str(e))]
+    finally:
+        # --- IMPORTANT ---
+        # Ensure resources are always closed to prevent leaks
+        if cursor:
+            cursor.close()
+        if engine:
+            engine.close()
+# def update_unity(df, selected_connection, session_state):
+#     """
+#     Applies table-level and column-level comments to Unity Catalog using the Databricks SQL connector.
+#     """
+#     try:
+#         engine = session_state['connections'][selected_connection]['engine']
+#         catalog = session_state['selected_catalog']
+#         schema_list = session_state['selected_schemas_per_connection'][selected_connection]
 
-    except Exception as e:
-        print('Error')
-        return 0, [("GENERAL_ERROR", "N/A", str(e))]
+#         success_count = 0
+#         failed_comments = []
+#         updated_tables = set()  # track tables already updated with table-level description
+
+#         cursor = engine.cursor()
+
+#         for _, row in df.iterrows():
+#             schema = None
+
+#             # Detect schema from fully qualified table name
+#             for possible_schema in schema_list:
+#                 if row['Table'].startswith(possible_schema + "."):
+#                     schema = possible_schema
+#                     # print("schema", schema)
+#                     table_name = row['Table'].split(".")[1]
+#                     break
+
+#             if not schema:
+#                 schema = schema_list[0]  # fallback
+#                 # print("schema ###", schema)
+#                 table_name = row['Table']
+#                 # print("table name" , table_name)
+
+#             column_name = row['Column']
+#             comment_text = row['Definition'].replace("'", "")  # escape single quotes
+#             table_description = row['Table Description'].replace("'", "")  # escape quotes
+
+#             fq_table = f"{catalog}.{table_name}"
+#             # print("table path" , fq_table)
+
+#             # Step 1: Set table-level comment (only once per table)
+#             if fq_table not in updated_tables:
+#                 try:
+#                     table_comment_query = f"""COMMENT ON TABLE {fq_table} IS '{table_description}'"""
+#                     # print(f"[TABLE] {table_comment_query}")
+#                     cursor.execute(table_comment_query)
+#                     updated_tables.add(fq_table)
+#                 except Exception as e:
+#                     failed_comments.append((table_name, "[TABLE_DESC]", str(e)))
+
+#             # Step 2: Set column-level comment
+#             try:
+#                 col_comment_query = f"""COMMENT ON COLUMN {fq_table}.{column_name} IS '{comment_text}'"""
+#                 # print(f"[COLUMN] {col_comment_query}")
+#                 cursor.execute(col_comment_query)
+#                 success_count += 1
+#             except Exception as e:
+#                 failed_comments.append((table_name, column_name, str(e)))
+
+#         cursor.close()
+#         return success_count, failed_comments
+
+#     except Exception as e:
+#         return 0, [("GENERAL_ERROR", "N/A", str(e))]
+
+#     except Exception as e:
+#         print('Error')
+#         return 0, [("GENERAL_ERROR", "N/A", str(e))]
 
 
 db_schema_prompt = PromptTemplate.from_template(
@@ -997,7 +1081,12 @@ with st.sidebar:
             connection_details['database'] = st.text_input("Database File Path")
                 
                 
-        
+        if db_type == "Azure Purview":
+            connection_details['tenant_id'] = st.text_input("Tenant ID", value="", type="password")
+            connection_details['client_id'] = st.text_input("Client ID", value="", type="password")
+            connection_details['client_secret'] = st.text_input("Client Secret", value="", type="password")
+            connection_details['purview_name'] = st.text_input("Purview Account Name", value="DataNext")
+
         else:
             connection_details['host'] = st.text_input("Host", type="password")
             connection_details['username'] = st.text_input("Username", type="password")

@@ -1,0 +1,410 @@
+USE [CDC_PROD_DB]
+GO
+/****** Object:  StoredProcedure [dbo].[M053_ILC_CUMULATIVE_PAP_REPORT_YYYY_YY_Q1-Q2-Q3-Q4]    Script Date: 04-09-2024 19:19:17 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+--M053_V3_ILC_CUMULATIVE_PAP_REPORT_YYYY_YY_Q1-Q2-Q3-Q4
+-- Amount Field needs to be mapped with ZAMTPF.BSPREM post Go Live 
+
+ALTER PROCEDURE [dbo].[M053_ILC_CUMULATIVE_PAP_REPORT_YYYY_YY_Q1-Q2-Q3-Q4] AS
+BEGIN
+DECLARE @START_DATE decimal
+DECLARE @START_DATE1 decimal
+DECLARE @END_DATE decimal
+
+SET @START_DATE1 = 
+case 
+when format(getdate(),'MM') between '07' and '09' then cast(concat(format(dateadd(year,+0,getdate()),'yyyy') , '01' , '01') as decimal)
+when format(getdate(),'MM') between '04' and '06' then cast(concat(format(dateadd(year,-1,getdate()),'yyyy') , '10' , '01') as decimal)
+when format(getdate(),'MM') between '10' and '12' then cast(concat(format(dateadd(year,+0,getdate()),'yyyy') , '04' , '01') as decimal)
+else cast(concat(format(dateadd(year,-1,getdate()),'yyyy') , '07' , '01') as decimal) end
+
+SET @START_DATE = 
+CASE
+when CAST(SUBSTRING(CAST(@START_DATE1 AS VARCHAR(8)), 5, 2) AS INT) < 4 then CAST(CAST(SUBSTRING(CAST(@START_DATE1 AS VARCHAR(8)), 1, 4) AS INT) - 1 AS VARCHAR(4)) + '0401'
+else SUBSTRING(CAST(@START_DATE1 AS VARCHAR(8)), 1, 4) + '0401'
+END
+
+SET @END_DATE = 
+case 
+when format(getdate(),'MM') between '04' and '06' then cast(concat(format(dateadd(year,-1,getdate()),'yyyy') , '12' , '31') as decimal)
+when format(getdate(),'MM') between '07' and '09' then cast(concat(format(dateadd(year,+0,getdate()),'yyyy') , '03' , '31') as decimal)
+when format(getdate(),'MM') between '10' and '12' then cast(concat(format(dateadd(year,+0,getdate()),'yyyy') , '06' , '30') as decimal)
+else cast(concat(format(dateadd(year,-1,getdate()),'yyyy') , '09' , '30') as decimal) end
+
+
+declare @PTRN1 as table (CHDRNUM varchar(8), PTRNEFF decimal)
+insert @PTRN1 select distinct chdrnum, ptrneff from PTRNPF where batctrcde = 'B521' and ptrneff  between @start_date and @end_date 
+ 
+
+declare @lins as table (chdrnum varchar(8), PAYFLAG varchar(1), INSTFROM decimal, BILLCD decimal)
+
+insert @lins select a.CHDrnum, case when b.chdrnum is null then 'O' else 'R' end, a.ptrneff,a.PTRNEFF from @PTRN1 a 
+left join PTRNPF b on a.chdrnum = b.chdrnum and a.ptrneff = b.PTRNEFF and b.validflag !='2' and b.batctrcde = 'B522'
+ 
+DECLARE @chdr as table (CHDRNUM varchar(8), CNTTYPE varchar(3), BILLFREQ varchar(2), VALIDFLAG varchar(1), OCCDATE decimal, AGNTNUM varchar(8),SINSTAMT06 decimal(17,2))
+DECLARE @covr as table (CHDRNUM varchar(8), CRTABLE varchar(4), VALIDFLAG varchar(1))
+ 
+insert @chdr select CHDRNUM,CNTTYPE,BILLFREQ,VALIDFLAG,OCCDATE,AGNTNUM,SINSTAMT06 from CHDRPF where CHDRNUM in (select CHDRNUM from @lins) and VALIDFLAG ='1' and BILLFREQ <> '00'
+insert @covr select CHDRNUM,CRTABLE,VALIDFLAG from COVRPF where CHDRNUM in (select CHDRNUM from @lins) and VALIDFLAG ='1' and coverage = '01' and rider = '00' and life = '01'
+
+;WITH
+
+TEMP1 AS (
+SELECT CASE 
+	WHEN chdr.BILLFREQ = '01' THEN 'Mode-wise Yearly'
+	WHEN chdr.BILLFREQ = '02' THEN 'Mode-wise Half-Yearly'
+    WHEN chdr.BILLFREQ = '04' THEN 'Mode-wise Quarterly'
+    WHEN chdr.BILLFREQ = '12' THEN 'Mode-wise Monthly'
+    ELSE 'Mode-wise Others' END [SLABS],
+CASE
+	WHEN chdr.BILLFREQ = '01' THEN 'Slab 1'
+	WHEN chdr.BILLFREQ = '02' THEN 'Slab 2'
+    WHEN chdr.BILLFREQ = '04' THEN 'Slab 3'
+    WHEN chdr.BILLFREQ = '12' THEN 'Slab 4'
+	ELSE 'Slab 5' END [SLAB],
+
+(SELECT ppm.LINKEDNONLINKED_U) [PRODCD],
+(SELECT(COUNT(DISTINCT lins.CHDRNUM))) AS [Premium Due Policies for Qtr], -- Distinct count for summary level
+(SELECT (SUM(chdr.SINSTAMT06))) AS [Premium Amt Due for Qtr] -- Summation for summary level
+
+FROM @lins lins
+    
+JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+JOIN DESCPF (NOLOCK) dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE AND ppm.STRPRODTYPE = 'Base'
+--left join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+
+    
+WHERE FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+GROUP BY chdr.BILLFREQ,ppm.LINKEDNONLINKED_U),
+
+TEMP2 AS (
+SELECT CASE
+	WHEN chdr.BILLFREQ = '01' THEN 'Mode-wise Yearly'
+    WHEN chdr.BILLFREQ = '02' THEN 'Mode-wise Half-Yearly'
+    WHEN chdr.BILLFREQ = '04' THEN 'Mode-wise Quarterly'
+    WHEN chdr.BILLFREQ = '12' THEN 'Mode-wise Monthly'
+    ELSE 'Mode-wise Others' END [SLABS],
+    
+CASE
+	WHEN chdr.BILLFREQ = '01' THEN 'Slab 1'
+    WHEN chdr.BILLFREQ = '02' THEN 'Slab 2'
+    WHEN chdr.BILLFREQ = '04' THEN 'Slab 3'
+    WHEN chdr.BILLFREQ = '12' THEN 'Slab 4'
+	ELSE 'Slab 5' END [SLAB],
+
+(SELECT ppm.LINKEDNONLINKED_U) [PRODCD],
+COUNT(DISTINCT lins.CHDRNUM) AS [Premium Awaited Policies], -- Distinct count for summary level
+SUM(chdr.SINSTAMT06) AS [Awaited Premium] -- Summation for summary level
+
+FROM @lins lins
+    
+JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+JOIN DESCPF (NOLOCK) dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+--left join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+
+    
+WHERE lins.PAYFLAG = 'O'
+AND FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+
+GROUP BY chdr.BILLFREQ, ppm.LINKEDNONLINKED_U),
+
+TEMP3 AS (
+    SELECT
+        CASE
+            WHEN zbrx.ZCHANNEL = 'Agency' THEN 'Agency'
+            WHEN zbrx.ZCHANNEL = 'Bancassurance' THEN 'Bancassurance'
+            WHEN zbrx.ZCHANNEL = 'Alternate Channel' THEN 'Alternate Channel'
+            WHEN zbrx.ZCHANNEL = 'Corporate Agent' THEN 'Corporate Agent'
+            WHEN zbrx.ZCHANNEL = 'Direct Sales Force' THEN 'Direct Sales Force'
+            WHEN zbrx.ZCHANNEL = 'POS' THEN 'POS'
+            WHEN zbrx.ZCHANNEL = 'Cross-Channel Sales Force' THEN 'Cross-Channel Sales Force'
+            WHEN zbrx.ZCHANNEL = 'Digital' THEN 'Digital'
+            WHEN zbrx.ZCHANNEL = 'Sales Distribution' THEN 'Sales Distribution'
+            WHEN zbrx.ZCHANNEL = 'DST' THEN 'DST'
+            WHEN zbrx.ZCHANNEL = 'E-Channel' THEN 'E-Channel'
+            ELSE 'NR'
+        END AS [SLABS],
+        CASE
+            WHEN zbrx.ZCHANNEL = 'Agency' THEN 'Slab 1'
+            WHEN zbrx.ZCHANNEL = 'Bancassurance' THEN 'Slab 2'
+            WHEN zbrx.ZCHANNEL = 'Alternate Channel' THEN 'Slab 3'
+            WHEN zbrx.ZCHANNEL = 'Corporate Agent' THEN 'Slab 4'
+            WHEN zbrx.ZCHANNEL = 'Direct Sales Force' THEN 'Slab 5'
+            WHEN zbrx.ZCHANNEL = 'POS' THEN 'Slab 6'
+            WHEN zbrx.ZCHANNEL = 'Cross-Channel Sales Force' THEN 'Slab 7'
+            WHEN zbrx.ZCHANNEL = 'Digital' THEN 'Slab 8'
+            WHEN zbrx.ZCHANNEL = 'Sales Distribution' THEN 'Slab 9'
+            WHEN zbrx.ZCHANNEL = 'DST' THEN 'Slab 10'
+            WHEN zbrx.ZCHANNEL = 'E-Channel' THEN 'Slab 11'
+            ELSE 'Slab 12'
+        END AS [SLAB],
+        ppm.LINKEDNONLINKED_U AS [PRODCD],
+        COUNT(DISTINCT lins.CHDRNUM) AS [Premium Due Policies for Qtr],
+        SUM(chdr.SINSTAMT06) AS [Premium Amt Due for Qtr]
+    FROM @lins lins
+    JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+    JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+    JOIN AGLFPF aglf ON aglf.AGNTCOY = '2' AND aglf.AGNTNUM = chdr.AGNTNUM AND aglf.VALIDFLAG = '1'
+    JOIN ZBRXPF zbrx ON zbrx.CHDRCOY = '2' AND CAST(zbrx.ZAGENTCD AS CHAR) = aglf.IRDNO
+    JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+    JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+	--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+
+    WHERE FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    GROUP BY
+        zbrx.ZCHANNEL,
+        ppm.LINKEDNONLINKED_U
+),
+
+TEMP4 AS (
+    SELECT
+        CASE
+            WHEN zbrx.ZCHANNEL = 'Agency' THEN 'Agency'
+            WHEN zbrx.ZCHANNEL = 'Bancassurance' THEN 'Bancassurance'
+            WHEN zbrx.ZCHANNEL = 'Alternate Channel' THEN 'Alternate Channel'
+            WHEN zbrx.ZCHANNEL = 'Corporate Agent' THEN 'Corporate Agent'
+            WHEN zbrx.ZCHANNEL = 'Direct Sales Force' THEN 'Direct Sales Force'
+            WHEN zbrx.ZCHANNEL = 'POS' THEN 'POS'
+            WHEN zbrx.ZCHANNEL = 'Cross-Channel Sales Force' THEN 'Cross-Channel Sales Force'
+            WHEN zbrx.ZCHANNEL = 'Digital' THEN 'Digital'
+            WHEN zbrx.ZCHANNEL = 'Sales Distribution' THEN 'Sales Distribution'
+            WHEN zbrx.ZCHANNEL = 'DST' THEN 'DST'
+            WHEN zbrx.ZCHANNEL = 'E-Channel' THEN 'E-Channel'
+            ELSE 'NR'
+        END AS [SLABS],
+        CASE
+            WHEN zbrx.ZCHANNEL = 'Agency' THEN 'Slab 1'
+            WHEN zbrx.ZCHANNEL = 'Bancassurance' THEN 'Slab 2'
+            WHEN zbrx.ZCHANNEL = 'Alternate Channel' THEN 'Slab 3'
+            WHEN zbrx.ZCHANNEL = 'Corporate Agent' THEN 'Slab 4'
+            WHEN zbrx.ZCHANNEL = 'Direct Sales Force' THEN 'Slab 5'
+            WHEN zbrx.ZCHANNEL = 'POS' THEN 'Slab 6'
+            WHEN zbrx.ZCHANNEL = 'Cross-Channel Sales Force' THEN 'Slab 7'
+            WHEN zbrx.ZCHANNEL = 'Digital' THEN 'Slab 8'
+            WHEN zbrx.ZCHANNEL = 'Sales Distribution' THEN 'Slab 9'
+            WHEN zbrx.ZCHANNEL = 'DST' THEN 'Slab 10'
+            WHEN zbrx.ZCHANNEL = 'E-Channel' THEN 'Slab 11'
+            ELSE 'Slab 12'
+        END AS [SLAB],
+        ppm.LINKEDNONLINKED_U AS [PRODCD],
+        COUNT(DISTINCT lins.CHDRNUM) AS [Premium Awaited Policies],
+        SUM(chdr.SINSTAMT06) AS [Awaited Premium]
+    FROM @lins lins
+    JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+    JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+    JOIN AGLFPF aglf ON aglf.AGNTCOY = '2' AND aglf.AGNTNUM = chdr.AGNTNUM AND aglf.VALIDFLAG = '1'
+    JOIN ZBRXPF zbrx ON zbrx.CHDRCOY = '2' AND CAST(zbrx.ZAGENTCD AS CHAR) = aglf.IRDNO
+    JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+    JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+	--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+
+    WHERE lins.PAYFLAG = 'O'
+    AND FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    GROUP BY
+        zbrx.ZCHANNEL,
+        ppm.LINKEDNONLINKED_U
+),
+
+TEMP5 AS (
+    SELECT
+        V.SLABS [SLABS],
+        V.SLAB [SLAB],
+        V.PRODCD [PRODCD],
+        ISNULL(COUNT(DISTINCT V.CHDRNUM), 0) AS [Premium Due Policies for Qtr],
+        ISNULL(SUM(V.SINSTAMT06), 0) AS [Premium Amt Due for Qtr]
+    FROM (
+        SELECT
+            CASE
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) <= 2000 THEN 'Slab-wise A.P. Upto Rs.2000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 2000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 5000 THEN 'Slab-wise A.P. Rs 2001/- to Rs 5000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 5000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 10000 THEN 'Slab-wise A.P. Rs 5001/- to Rs 10000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 10000 THEN 'Slab-wise A.P. More than Rs.10000/-'
+            END AS [SLABS],
+            CASE
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) <= 2000 THEN 'Slab 1'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 2000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 5000 THEN 'Slab 2'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 5000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 10000 THEN 'Slab 3'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 10000 THEN 'Slab 4'
+            END AS [SLAB],
+            ppm.LINKEDNONLINKED_U AS [PRODCD],
+            lins.CHDRNUM,
+            chdr.SINSTAMT06
+        FROM @lins lins
+        JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+        JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+        JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+        JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+		--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+
+        WHERE FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    ) V
+    GROUP BY
+        V.SLABS,
+        V.SLAB,
+        V.PRODCD
+),
+
+TEMP6 AS (
+    SELECT
+        VV.SLABS [SLABS],
+        VV.SLAB [SLAB],
+        VV.PRODCD [PRODCD],
+        ISNULL(COUNT(DISTINCT VV.CHDRNUM), 0) AS [Premium Awaited Policies],
+        ISNULL(SUM(VV.SINSTAMT06), 0) AS [Awaited Premium]
+    FROM (
+        SELECT
+            CASE
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) <= 2000 THEN 'Slab-wise A.P. Upto Rs.2000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 2000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 5000 THEN 'Slab-wise A.P. Rs 2001/- to Rs 5000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 5000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 10000 THEN 'Slab-wise A.P. Rs 5001/- to Rs 10000/-'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 10000 THEN 'Slab-wise A.P. More than Rs.10000/-'
+            END AS [SLABS],
+            CASE
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) <= 2000 THEN 'Slab 1'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 2000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 5000 THEN 'Slab 2'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 5000 AND (chdr.BILLFREQ * chdr.SINSTAMT06) <= 10000 THEN 'Slab 3'
+                WHEN (chdr.BILLFREQ * chdr.SINSTAMT06) > 10000 THEN 'Slab 4'
+            END AS [SLAB],
+            ppm.LINKEDNONLINKED_U AS [PRODCD],
+            lins.CHDRNUM,
+            chdr.SINSTAMT06
+        FROM @lins lins
+        JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+        JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+        JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+        JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+		--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+        WHERE lins.PAYFLAG = 'O'
+        AND FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    ) VV
+    GROUP BY
+        VV.SLABS,
+        VV.SLAB,
+        VV.PRODCD
+),
+
+TEMP7 AS (
+    SELECT
+        T.SLABS [SLABS],
+        T.SLAB [SLAB],
+        T.PRODCD [PRODCD],
+        ISNULL(COUNT(DISTINCT T.CHDRNUM), 0) AS [Premium Due Policies for Qtr],
+        ISNULL(SUM(T.SINSTAMT06), 0) AS [Premium Amt Due for Qtr]
+    FROM (
+        SELECT
+            
+case when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '12' then 'Cohort-wise Less than 12 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '12' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '24' then 'Cohort-wise Less than 24 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '24' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '36' then 'Cohort-wise Less than 36 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '36' then 'Cohort-wise  Greater than 36 Months' end [SLABS],
+case when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '12' then 'Slab 1'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '12' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '24' then 'Slab 2'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '24' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '36' then 'Slab 3'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '36' then 'Slab 4' end [SLAB],
+
+            ppm.LINKEDNONLINKED_U AS [PRODCD],
+            lins.CHDRNUM,
+            chdr.SINSTAMT06
+        FROM @lins lins
+        JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+        JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+        JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+        JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+		--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+        WHERE FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    ) T
+    GROUP BY
+        T.SLABS,
+        T.SLAB,
+        T.PRODCD
+),
+
+TEMP8 AS (
+    SELECT
+        TT.SLABS [SLABS],
+        TT.SLAB [SLAB],
+        TT.PRODCD [PRODCD],
+        ISNULL(COUNT(DISTINCT TT.CHDRNUM), 0) AS [Premium Awaited Policies],
+        ISNULL(SUM(TT.SINSTAMT06), 0) AS [Awaited Premium]
+    FROM (
+        SELECT
+case when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '12' then 'Cohort-wise Less than 12 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '12' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '24' then 'Cohort-wise Less than 24 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '24' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '36' then 'Cohort-wise Less than 36 Months'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '36' then 'Cohort-wise  Greater than 36 Months' end [SLABS],
+case when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '12' then 'Slab 1'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '12' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '24' then 'Slab 2'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '24' and datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) < '36' then 'Slab 3'
+	 when datediff(month,format(convert(date, cast(chdr.OCCDATE as varchar(10))),'yyyyMMdd'),format(convert(date, cast(lins.BILLCD as varchar(10))),'yyyyMMdd')) >= '36' then 'Slab 4' end [SLAB], 
+
+            ppm.LINKEDNONLINKED_U AS [PRODCD],
+            lins.CHDRNUM,
+            chdr.SINSTAMT06
+        FROM @lins lins
+        JOIN @chdr chdr ON chdr.CHDRNUM = lins.CHDRNUM
+        JOIN @covr covr ON covr.CHDRNUM = chdr.CHDRNUM
+        JOIN DESCPF dscc ON dscc.DESCTABL = 'TXG22' AND dscc.DESCPFX = 'IT' AND dscc.DESCITEM = covr.crtable
+        JOIN Product_Master_M ppm ON ppm.Coverage_Code = covr.CRTABLE
+		--join ZAMTPF zamt on zamt.ZPOLINUM = covr.CHDRNUM and zamt.ZCRTABLE = covr.CRTABLE
+        WHERE lins.PAYFLAG = 'O'
+        AND FORMAT(CONVERT(DATE, CAST(lins.INSTFROM AS VARCHAR(8))), 'dd-MM-yyyy') >= FORMAT(DATEADD(YEAR, +1, CAST(CAST(chdr.OCCDATE AS VARCHAR(10)) AS DATE)), 'dd-MM-yyyy')
+    ) TT
+    GROUP BY
+        TT.SLABS,
+        TT.SLAB,
+        TT.PRODCD
+)
+
+
+
+SELECT T1.SLABS [SLABS] , T1.SLAB [SLAB] , T1.PRODCD [PRODCD] , T1.[Premium Due Policies for Qtr] [Premium Due Policies for Qtr],
+T1.[Premium Amt Due for Qtr] [Premium Amt Due for Qtr], 
+(CASE WHEN T2.[Premium Awaited Policies] <> '0' then T2.[Premium Awaited Policies] else '0' end ) [Premium Awaited Poliices],
+(CASE WHEN T2.[Awaited Premium] <>'0' then T2.[Awaited Premium] else '0' end) [Awaited Premium]
+
+FROM TEMP1 T1
+
+LEFT JOIN TEMP2 T2 on T1.SLABS = T2.SLABS and T1.SLAB = T2.SLAB and T1.PRODCD = T2.PRODCD
+
+UNION 
+
+SELECT T3.SLABS [SLABS] , T3.SLAB [SLAB] , T3.PRODCD [PRODCD] , T3.[Premium Due Policies for Qtr] [Premium Due Policies for Qtr],
+T3.[Premium Amt Due for Qtr] [Premium Amt Due for Qtr], 
+(CASE WHEN T4.[Premium Awaited Policies] <> '0' then T4.[Premium Awaited Policies] else '0' end) [Premium Awaited Poliices],
+(CASE WHEN T4.[Awaited Premium] <>'0' then T4.[Awaited Premium] else '0' end) [Awaited Premium]
+
+FROM TEMP3 T3
+
+LEFT JOIN TEMP4 T4 on T3.SLABS = T4.SLABS and T3.SLAB = T4.SLAB and T3.PRODCD = T4.PRODCD
+
+UNION 
+
+SELECT T5.SLABS [SLABS] , T5.SLAB [SLAB] , T5.PRODCD [PRODCD] , T5.[Premium Due Policies for Qtr] [Premium Due Policies for Qtr],
+T5.[Premium Amt Due for Qtr] [Premium Amt Due for Qtr], 
+(CASE WHEN T6.[Premium Awaited PolicIes] <> '0' then T6.[Premium Awaited PolicIes] else '0' end) [Premium Awaited Poliices],
+(CASE WHEN T6.[Awaited Premium] <>'0' then T6.[Awaited Premium] else '0' end) [Awaited Premium]
+
+FROM TEMP5 T5
+
+LEFT JOIN TEMP6 T6 on T5.SLABS = T6.SLABS and T5.SLAB = T6.SLAB and T5.PRODCD = T6.PRODCD
+
+UNION
+
+SELECT T7.SLABS [SLABS] , T7.SLAB [SLAB] , T7.PRODCD [PRODCD] , T7.[Premium Due Policies for Qtr] [Premium Due Policies for Qtr],
+T7.[Premium Amt Due for Qtr] [Premium Amt Due for Qtr], 
+(CASE WHEN T8.[Premium Awaited Policies] <> '0' then T8.[Premium Awaited Policies] else '0' end) [Premium Awaited Poliices],
+(CASE WHEN T8.[Awaited Premium] <>'0' then T8.[Awaited Premium] else '0' end) [Awaited Premium]
+
+FROM TEMP7 T7
+
+LEFT JOIN TEMP8 T8 on T7.SLABS = T8.SLABS and T7.SLAB = T8.SLAB and T7.PRODCD = T8.PRODCD
+
+END;

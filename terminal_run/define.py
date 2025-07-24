@@ -41,7 +41,7 @@ gpt4o = AzureChatOpenAI(
     max_tokens=4096
     )
 
-hf_embeddings = HuggingFaceEmbeddings(model_name="C:/dev/hf/all-mpnet-base-v2/", model_kwargs={'trust_remote_code': True})
+hf_embeddings = HuggingFaceEmbeddings(model_name="C:/Users/GJ287BK/DataNext/all-mpnet-base-v2", model_kwargs={'trust_remote_code': True})
 
 
 # Initialise paths

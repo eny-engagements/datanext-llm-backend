@@ -796,20 +796,21 @@ def visualise_etl(plsql_script, report_name, df):
     """
     graphviz_code = graphviz_code[:index+1] + legend + graphviz_code[index+1:]
 
-    if not os.path.exists("./output/etl documentation"):
-        os.makedirs("./output/etl documentation")
+    LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:/EY/ey-genai-datanext-frontend/public"
+    if not os.path.exists(LINEAGE_EXTRACTOR_OUTPUT_DIR):
+        os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR)
     
-    with open(f"./output/etl documentation/{report_name.replace(".txt", "").replace(".sql", "")} Lineage Diagram Code.txt", 'w') as f:
+    with open(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "").replace(".sql", "")}_Lineage_Diagram_Code.txt", 'w') as f:
         f.write(graphviz_code)
 
-    image_path = f"./output/etl documentation/{report_name.replace(".txt", "").replace(".sql", "")} Lineage Diagram"
+    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "").replace(".sql", "")}_Lineage_Diagram"
     diagram = Source(graphviz_code, engine='dot')
 
     error = True
     i = 0
     while i < 5 and error:    
         try:
-            with open(f"./output/etl documentation/{report_name.replace(".txt", "")} Lineage Diagram Code.txt", 'w') as f:
+            with open(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "")}_Lineage_Diagram_Code.txt", 'w') as f:
                 f.write(graphviz_code)
             diagram = Source(graphviz_code, engine='dot')
             diagram.render(image_path, format='png', view=False, cleanup=True)
@@ -822,16 +823,16 @@ def visualise_etl(plsql_script, report_name, df):
             continue
 
 def create_etl_documentation_excel(df, report_name):
-    workbook_name = report_name.replace(".txt", " ETL Documentation.xlsx").replace(".sql", " ETL Documentation.xlsx")
+    workbook_name = report_name.replace(".txt", "_ETL_Documentation.xlsx").replace(".sql", "_ETL_Documentation.xlsx")
     sheet_name = "Analysis"
+    LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:/EY/ey-genai-datanext-frontend/public"
+    if not os.path.exists(LINEAGE_EXTRACTOR_OUTPUT_DIR):
+        os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR)
 
-    if not os.path.exists("./output/etl documentation"):
-        os.makedirs("./output/etl documentation/")
-
-    with pd.ExcelWriter(f"./output/etl documentation/{workbook_name}", mode='w', engine='openpyxl') as writer:
+    with pd.ExcelWriter(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}", mode='w', engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    wb = load_workbook(f"./output/etl documentation/{workbook_name}")
+    wb = load_workbook(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}")
     ws = wb[sheet_name]
     max_row = ws.max_row
     max_col = ws.max_column
@@ -868,13 +869,13 @@ def create_etl_documentation_excel(df, report_name):
             ws.column_dimensions[col_letter].width = 15
 
     
-    image_path = f"./output/etl documentation/{report_name.replace('.txt', '').replace(".sql", "")} Lineage Diagram.png"
+    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '').replace(".sql", "")}_Lineage_Diagram.png"
     if os.path.exists(image_path):
         ws = wb.create_sheet('Lineage Visualisation')
         image = Image(image_path)
         ws.add_image(image, 'A1')
 
-    wb.save(f"./output/etl documentation/{workbook_name}")
+    wb.save(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}")
 
 
 # Streamlit Interface
@@ -973,6 +974,3 @@ if st.session_state['table_raw'] is not None:
      
 
     
-    
-
-

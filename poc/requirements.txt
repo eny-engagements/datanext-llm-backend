@@ -17,7 +17,7 @@ seaborn
 matplotlib
 ydata_profiling
 sentence_transformers
-sklearn
+scikit-learn
 sdv
 autogen
 setuptools

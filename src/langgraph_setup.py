@@ -4,21 +4,29 @@ import shutil
 import asyncio
 from langchain_core.tools import tool
 from typing import Optional
-from etl_documentation import analyse_sp as actual_lineage_extractor_analyse_sp
-from etl_documentation import visualise_etl as actual_lineage_extractor_visualise_etl
-from etl_documentation import create_etl_documentation_excel as actual_lineage_extractor_create_excel
-from etl_documentation import get_glossary as actual_lineage_extractor_get_glossary
+from use_cases.etl_documentation import analyse_sp as actual_lineage_extractor_analyse_sp
+from use_cases.etl_documentation import visualise_etl as actual_lineage_extractor_visualise_etl
+from use_cases.etl_documentation import create_etl_documentation_excel as actual_lineage_extractor_create_excel
+from use_cases.etl_documentation import get_glossary as actual_lineage_extractor_get_glossary
 
-from define import read_schema_in_chunks_and_batch as actual_define_read_schema
-from define import parallel_description as actual_define_parallel_description
-from define import create_business_glossary_excel as actual_define_create_excel
+from use_cases.define import read_schema_in_chunks_and_batch as actual_define_read_schema
+from use_cases.define import parallel_description as actual_define_parallel_description
+from use_cases.define import create_business_glossary_excel as actual_define_create_excel
 
-from discover import create_db_engine, get_schemas, get_tables, create_table_overview, create_glossary, generate_csv
+from use_cases.discover import ( create_db_engine, get_schemas, get_tables, create_table_overview, 
+                       create_glossary, generate_csv, get_catalogs_databricks, get_tables_databricks,
+                        get_schemas_databricks, fetch_table_metadata, generate_df, apply_comments_to_unity_catalog,
+                        list_purview_sql_tables,
+                        fetch_purview_metadata,
+                        list_existing_purview_glossaries, 
+                        push_glossary_terms_to_purview, 
+                        create_purview_glossary,
+                        sanitize_term_name,update_unity )
 import json
 
-DEFINE_AI_OUTPUT_DIR = "./output/business glossary"
-LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:/Users/TR613EZ/Downloads/lineage_extractor_output/"
-DISCOVER_AI_OUTPUT_DIR = "./output/discovered glossary"
+DEFINE_AI_OUTPUT_DIR = "C:\\Users\\GJ287BK\\DataNext\\hf"
+LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:\\Users\\GJ287BK\\DataNext\\hf"
+DISCOVER_AI_OUTPUT_DIR = "C:\\Users\\GJ287BK\\DataNext\\hf"
 os.makedirs(DEFINE_AI_OUTPUT_DIR, exist_ok=True)
 os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR, exist_ok=True)
 os.makedirs(DISCOVER_AI_OUTPUT_DIR, exist_ok=True)
@@ -44,17 +52,22 @@ def define_data_model_from_excel(excel_path: str, schema_description: str) -> st
             all_glossary_parts.append(glossary_part)
         final_glossary_markdown = "  \n".join(all_glossary_parts)
 
-        schema_name_from_path = os.path.basename(excel_path)
+        # schema_name_from_path = os.path.basename(excel_path)
+        schema_name_from_path = "Schema.xlsx"
         # Note: Your actual_define_create_excel also saves the file. We'll rely on its path logic.
         actual_define_create_excel(schema_name_from_path, final_glossary_markdown)
 
-        output_excel_filename = schema_name_from_path.replace(".xlsx", "") + "_with_Business_Glossary.xlsx"
+        output_excel_filename = schema_name_from_path.replace(".xlsx", "") + "_With_Business_Glossary.xlsx"
         output_excel_path = os.path.join(DEFINE_AI_OUTPUT_DIR, output_excel_filename)
 
         return f"Business Glossary generation complete. Excel output saved to: {output_excel_path}"
     except Exception as e:
         return f"Error in define_data_model_from_excel: {e}"
-
+        # db_name_for_file = database or service or "discovered_db"
+        # output_csv_filename = f"discovered_glossary_{db_name_for_file}.csv"
+        # output_csv_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, output_csv_filename)
+        # with open(output_csv_path, "w", newline="") as f:
+        #     f.write(csv_content)
 @tool
 def extract_etl_lineage_and_documentation(
     script_path: str,
@@ -89,7 +102,8 @@ def extract_etl_lineage_and_documentation(
                 print(f"Warning: Could not process glossary file '{business_glossary_excel_path}': {e}. Proceeding without it.")
 
     try:
-        report_name = os.path.basename(script_path)
+        # report_name = os.path.basename(script_path)
+        report_name = "Lineage.txt"
         with open(script_path, 'r', encoding='utf-8') as f:
             script_content_for_analysis = f.read()
 
@@ -100,7 +114,7 @@ def extract_etl_lineage_and_documentation(
         )
         diagram_path = actual_lineage_extractor_visualise_etl(script_content_for_analysis, report_name, df_analysis)
         actual_lineage_extractor_create_excel(df_filled_analysis, report_name)
-        output_excel_filename = report_name.replace(".txt", " ETL Documentation.xlsx").replace(".sql", " ETL Documentation.xlsx")
+        output_excel_filename = report_name.replace(".txt", "_ETL_Documentation.xlsx").replace(".sql", "_ETL_Documentation.xlsx")
         output_excel_path = os.path.join(LINEAGE_EXTRACTOR_OUTPUT_DIR, output_excel_filename)
 
         # The markdown table (df_analysis.to_markdown()) could be returned if the agent is prompted to display it.
@@ -165,6 +179,312 @@ def discover_database_and_generate_glossary(db_type: str, host: Optional[str] = 
         return f"Database discovery and glossary generation complete. CSV output saved to: {output_csv_path}"
     except Exception as e:
         return f"An error occurred during discovery and glossary generation: {e}"
+# --- NEW DATABRICKS TOOL 1: FOR DISCOVERY ---
+@tool
+def discover_databricks_structure(server_hostname: str, http_path: str, access_token: str) -> str:
+    """
+    Connects to a Databricks workspace and lists all available catalogs and their corresponding schemas.
+    This tool is for exploration and does NOT generate a glossary.
+    The output is a structured string for the user to review.
+    """
+    print("--- TOOL: discover_databricks_structure called ---")
+    config = {
+        'rdbms': 'Databricks',
+        'server_hostname': server_hostname,
+        'http_path': http_path,
+        'access_token': access_token,
+    }
+    
+    try:
+        engine, error = create_db_engine(config)
+        if error: return f"Databricks Connection Failed: {error}"
+
+        catalogs, cat_err = get_catalogs_databricks(engine)
+        if cat_err: return f"Databricks Catalog Discovery Failed: {cat_err}"
+
+        if not catalogs:
+            return "No catalogs found in the Databricks workspace."
+
+        # Build a human-readable string of the structure
+        structure_report = ["Here are the catalogs and schemas found in your Databricks workspace:"]
+        for catalog in catalogs:
+            # Skip system catalogs unless necessary
+            if catalog.lower() in ['system', 'information_schema']:
+                continue
+            structure_report.append(f"\nCatalog: `{catalog}`")
+            
+            schemas, sch_err = get_schemas_databricks(engine, catalog)
+            if sch_err:
+                structure_report.append("  - (Could not fetch schemas)")
+                continue
+            
+            if not schemas:
+                structure_report.append("  - (No schemas found in this catalog)")
+            
+            for schema in schemas:
+                structure_report.append(f"  - Schema: `{schema}`")
+        
+        structure_report.append("\nPlease review the list and tell me which catalog and which specific schema(s) you want me to generate a glossary for.")
+        
+        return "\n".join(structure_report)
+
+    except Exception as e:
+        return f"An unexpected error occurred during Databricks discovery: {e}"
+
+# --- NEW DATABRICKS TOOL 2: FOR GLOSSARY GENERATION ---
+@tool
+def generate_databricks_glossary_for_schemas(server_hostname: str, http_path: str, access_token: str, catalog: str, schemas: str) -> str:
+    """
+    Generates a business glossary for all tables within one or more specific schemas in a given Databricks catalog.
+    'schemas' should be a comma-separated string of schema names (e.g., 'default,sales_data').
+    """
+    print(f"--- TOOL: generate_databricks_glossary_for_schemas called for catalog '{catalog}' and schemas '{schemas}' ---")
+    try:
+        # Robust path logic
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # output_base_dir = os.path.join(script_dir, '..', 'output', 'business glossary', 'discovered glossary')
+        # os.makedirs(output_base_dir, exist_ok=True)
+        
+        config = {
+            'rdbms': 'Databricks',
+            'server_hostname': server_hostname,
+            'http_path': http_path,
+            'access_token': access_token,
+            'catalog': catalog
+        }
+        
+        schema_list = [s.strip() for s in schemas.split(',')]
+        if not schema_list or all(s == '' for s in schema_list):
+            return "Error: You must provide at least one valid schema name."
+            
+        engine, error = create_db_engine(config)
+        if error: return f"Databricks Connection Failed: {error}"
+
+        overview = {"live_connection": []}
+        for schema in schema_list:
+            tables, tbl_err = get_tables_databricks(engine, catalog, schema)
+            if tbl_err: continue
+            for table in tables:
+                metadata, meta_err = fetch_table_metadata(engine, table, schema, catalog, db_type='Databricks')
+                if meta_err: continue
+                formatted_meta = [f"{col['name']}: ({col['type']}) [{col.get('constraints', '')}]" for col in metadata.get('columns', [])]
+                overview["live_connection"].append({"Schema": schema, "Table": table, "Metadata": formatted_meta})
+
+        if not overview["live_connection"]:
+            return f"No tables or metadata could be found in the specified schemas: {schemas}."
+
+        schema_data_json = json.dumps(overview)
+        _, csv_data = create_glossary(schema_data_json)
+        if not csv_data:
+             return "Error: The AI failed to generate a glossary in the correct format."
+        
+        df_glossary = generate_df(csv_data)
+
+        # Save the final, user-facing CSV
+        output_csv_filename = f"discovered_glossary_databricks_{catalog}_{'_'.join(schema_list)}.csv"
+        output_csv_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, output_csv_filename)
+        df_glossary.to_csv(output_csv_path, index=False, encoding='utf-8')
+        
+        # --- NEW LOGIC: Save a temporary file for the next tool ---
+        temp_glossary_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, "temp_glossary_for_update.csv")
+        df_glossary.to_csv(temp_glossary_path, index=False, encoding='utf-8')
+
+        # --- NEW LOGIC: Return a message that includes the temp path for the agent ---
+        return (f"Glossary generation complete. The final file is saved at: {output_csv_path}. "
+                f"The temporary file for Unity Catalog update is ready at: {temp_glossary_path}")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"An unexpected fatal error occurred during glossary generation: {e}"
+    
+#Update Unity catalog
+@tool
+def update_unity_catalog(server_hostname: str, http_path: str, access_token: str, catalog: str, schemas: str, glossary_csv_path: str) -> str:
+    """
+    Applies comments from a generated glossary CSV file to the specified tables and columns in Databricks Unity Catalog.
+    """
+    print(f"--- TOOL: update_unity_catalog called for catalog '{catalog}' ---")
+    if not os.path.exists(glossary_csv_path):
+        return f"Error: The glossary file was not found at the specified path: {glossary_csv_path}"
+ 
+    try:
+        config = {
+            'rdbms': 'Databricks',
+            'server_hostname': server_hostname,
+            'http_path': http_path,
+            'access_token': access_token
+        }
+        engine, error = create_db_engine(config)
+        if error:
+            return f"Failed to connect to Databricks: {error}"
+ 
+        # Load the glossary data
+        df_glossary = pd.read_csv(glossary_csv_path)
+        schema_list = [s.strip() for s in schemas.split(',')]
+ 
+        # Call the backend function to apply comments
+        success_count, failures = update_unity(engine, catalog, schema_list, df_glossary)
+ 
+        if failures:
+            failed_str = "\n".join([f"- {tbl}.{col}: {err}" for tbl, col, err in failures])
+            return (f"Partially completed. Successfully updated {success_count} comments. "
+                    f"Failed to update {len(failures)} comments. Failures:\n{failed_str}")
+ 
+        return f"Successfully applied {success_count} comments to Unity Catalog in catalog '{catalog}'."
+ 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"An unexpected error occurred while updating Unity Catalog: {e}"
+
+# --- PURVIEW TOOL 1: DISCOVER TABLES ---
+@tool
+def discover_purview_tables(tenant_id: str, client_id: str, client_secret: str, purview_name: str) -> str:
+    """Connects to Azure Purview and lists all available, registered SQL tables."""
+    print(f"--- TOOL: discover_purview_tables for account: {purview_name} ---")
+    config = {
+        'rdbms': 'Azure Purview', 'tenant_id': tenant_id,
+        'client_id': client_id, 'client_secret': client_secret, 'purview_name': purview_name
+    }
+    try:
+        client, error = create_db_engine(config)
+        if error: return f"Purview Connection Failed: {error}"
+
+        tables, err = list_purview_sql_tables(client)
+        if err: return f"Error fetching tables: {err}"
+        if not tables: return "No registered SQL tables were found in this Purview account."
+
+        table_list = [f"- `{t['name']}`" for t in tables]
+        return ("The following SQL tables were found in your Purview account:\n" +
+                "\n".join(table_list) +
+                "\n\nPlease specify which tables you want to generate a glossary for (you can say 'all' or list them, comma-separated).")
+    except Exception as e:
+        return f"An unexpected error occurred: {e}"
+
+# --- PURVIEW TOOL 2: GENERATE GLOSSARY ---
+@tool
+def generate_purview_glossary_for_tables(tenant_id: str, client_id: str, client_secret: str, purview_name: str, tables_to_process: str) -> str:
+    """Generates a business glossary for specific tables discovered in Azure Purview."""
+    print(f"--- TOOL: generate_purview_glossary_for_tables for tables: {tables_to_process} ---")
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_base_dir = os.path.join(script_dir, '..', 'output', 'business glossary', 'discovered glossary')
+        os.makedirs(output_base_dir, exist_ok=True)
+        
+        config = {'rdbms': 'Azure Purview', 'tenant_id': tenant_id, 'client_id': client_id, 'client_secret': client_secret, 'purview_name': purview_name}
+        client, error = create_db_engine(config)
+        if error: return f"Purview Connection Failed: {error}"
+        
+        all_tables, err = list_purview_sql_tables(client)
+        if err: return f"Could not list Purview tables: {err}"
+
+        selected_tables = []
+        if tables_to_process.strip().lower() == 'all':
+            selected_tables = all_tables
+        else:
+            user_table_names = {t.strip().lower() for t in tables_to_process.split(',')}
+            selected_tables = [tbl for tbl in all_tables if tbl['name'].lower() in user_table_names]
+
+        if not selected_tables: return f"Error: None of the specified tables ({tables_to_process}) could be found in Purview."
+        
+        overview = {"live_connection": []}
+        for tbl in selected_tables:
+            metadata, meta_err = fetch_purview_metadata(client, tbl['guid'], tbl['name'])
+            if meta_err: continue
+            formatted_meta = [f"{col['name']}: ({col['type']})" for col in metadata]
+            overview["live_connection"].append({"Schema": "purview", "Table": tbl['name'], "Metadata": formatted_meta})
+
+        if not overview["live_connection"]: return "Could not fetch metadata for any of the selected tables."
+
+        schema_data_json = json.dumps(overview)
+        _, csv_data = create_glossary(schema_data_json)
+        if not csv_data: return "Error: The AI failed to generate a glossary in the correct format."
+        
+        df_glossary = generate_df(csv_data)
+        
+        temp_glossary_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, "temp_purview_glossary_for_update.csv")
+        df_glossary.to_csv(temp_glossary_path, index=False, encoding='utf-8')
+        
+        return (f"Glossary generation for {len(selected_tables)} Purview table(s) complete. "
+                f"The temporary file for the Purview update is ready at: {temp_glossary_path}")
+    except Exception as e:
+        return f"An unexpected error occurred during Purview glossary generation: {e}"
+
+# --- PURVIEW TOOL 3: LIST GLOSSARIES ---
+@tool
+def list_purview_glossaries(tenant_id: str, client_id: str, client_secret: str, purview_name: str) -> str:
+    """Connects to Azure Purview and lists all existing glossaries."""
+    print(f"--- TOOL: list_purview_glossaries for account: {purview_name} ---")
+    config = {'rdbms': 'Azure Purview', 'tenant_id': tenant_id, 'client_id': client_id, 'client_secret': client_secret, 'purview_name': purview_name}
+    client, error = create_db_engine(config)
+    if error: return f"Purview Connection Failed: {error}"
+
+    glossaries, err = list_existing_purview_glossaries(client)
+    if err: return f"Error fetching glossaries: {err}"
+    if not glossaries: return "No glossaries found in this Purview account. Please provide a name for a new glossary to be created."
+
+    glossary_list = [f"- `{g['name']}`" for g in glossaries]
+    return ("The glossary has been generated. Would you like me to push the terms to Purview? "
+            "Please choose an existing glossary from the list below, or provide a new name to create one.\n\n" +
+            "\n".join(glossary_list))
+
+# --- PURVIEW TOOL 4: PUSH TO GLOSSARY ---
+@tool
+def push_to_purview_glossary(tenant_id: str, client_id: str, client_secret: str, purview_name: str, glossary_name: str, glossary_csv_path: str) -> str:
+    """Pushes terms from a CSV file to a specified Azure Purview glossary, creating it if it doesn't exist."""
+    print(f"--- TOOL: push_to_purview_glossary for glossary: {glossary_name} ---")
+    if not os.path.exists(glossary_csv_path):
+        return f"Error: The glossary file was not found at {glossary_csv_path}. The agent must find this path from the conversation history."
+        
+    config = {'rdbms': 'Azure Purview', 'tenant_id': tenant_id, 'client_id': client_id, 'client_secret': client_secret, 'purview_name': purview_name}
+    
+    try:
+        client, error = create_db_engine(config)
+        if error: return f"Purview Connection Failed: {error}"
+
+        # 1. Find or Create the Glossary
+        glossaries, err = list_existing_purview_glossaries(client)
+        if err: return f"Could not list existing glossaries: {err}"
+
+        target_glossary_guid = None
+        for g in glossaries:
+            if g['name'].lower() == glossary_name.lower():
+                target_glossary_guid = g['guid']
+                print(f"Found existing glossary '{glossary_name}' with GUID: {target_glossary_guid}")
+                break
+        
+        if not target_glossary_guid:
+            print(f"Glossary '{glossary_name}' not found. Creating it...")
+            # The create_purview_glossary function from discover.py is what we should use here
+            guid, create_err = create_purview_glossary(client, glossary_name, f"Glossary for {purview_name} assets", f"Auto-generated by DataNext Agent for {purview_name}.")
+            if create_err: return f"Failed to create new glossary '{glossary_name}': {create_err}"
+            target_glossary_guid = guid
+            print(f"Successfully created new glossary '{glossary_name}' with GUID: {target_glossary_guid}")
+
+        # 2. Read the PRE-GENERATED glossary file
+        df_glossary = pd.read_csv(glossary_csv_path)
+        
+        # 3. Get a fresh list of all tables to ensure GUIDs are correct
+        all_tables, list_err = list_purview_sql_tables(client)
+        if list_err: return f"Could not get a fresh list of tables from Purview: {list_err}"
+        
+        # 4. Call the push function
+        print(f"Pushing {len(df_glossary)} terms to glossary GUID {target_glossary_guid}...")
+        success_count, failures = push_glossary_terms_to_purview(client, target_glossary_guid, df_glossary, all_tables)
+
+        if failures:
+            failed_str = "\n".join([f"- {tbl}.{col}: {err}" for tbl, col, err in failures])
+            return (f"Partially completed. Successfully pushed {success_count} terms. "
+                    f"Failed to push {len(failures)} terms. Failures:\n{failed_str}")
+
+        return f"Successfully pushed {success_count} terms to the '{glossary_name}' glossary in Azure Purview."
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"An unexpected error occurred while pushing to Purview: {e}"
+
 
 # Step 2
 from langchain_openai import AzureChatOpenAI
@@ -208,23 +528,43 @@ lineage_extractor_agent = create_react_agent(
 
 discover_agent = create_react_agent(
     model=agent_llm,
-    tools=[discover_database_and_generate_glossary],
+    tools=[
+        # RDBMS Tool
+        discover_database_and_generate_glossary,
+        # Databricks Tools
+        discover_databricks_structure,
+        generate_databricks_glossary_for_schemas,
+        update_unity_catalog,
+        # Purview Tools - ADD THESE
+        discover_purview_tables,
+        generate_purview_glossary_for_tables,
+        list_purview_glossaries,
+        push_to_purview_glossary
+    ],
     prompt=(
-        "You are the DiscoverAgent, a specialist in connecting to live databases, discovering their "
-        "metadata, and generating a business glossary. To use the 'discover_database_and_generate_glossary' "
-        "tool, you need the database connection details.\n\n"
-        "**Your primary task is to look at the user's messages in the conversation history to find these details.**\n"
-        "Extract the following arguments for the tool from the conversation:\n"
-        "- db_type (e.g., PostgreSQL, MySQL, etc.)\n"
-        "- host\n"
-        "- username\n"
-        "- password\n"
-        "- database (the database name)\n\n"
-        "Once you have gathered all necessary arguments from the conversation history, call the "
-        "'discover_database_and_generate_glossary' tool with all the extracted arguments."
+        "You are the DiscoverAgent, a specialist in generating glossaries and updating data catalogs.\n"
+        "You must guide the user through a multi-step process depending on the data source.\n\n"
+        "**Databricks Workflow:**\n"
+        "1. Call `discover_databricks_structure` to list catalogs/schemas.\n"
+        "2. Ask user to select catalog/schemas.\n"
+        "3. Call `generate_databricks_glossary_for_schemas`.\n"
+        "4. The tool returns a temp file path. Ask the user if they want to update Unity Catalog.\n"
+        "5. If 'yes', call `update_unity_catalog` with all required arguments, including the temp file path from conversation history.\n\n"
+        "**Azure Purview Workflow:**\n"
+        "1. First, call `discover_purview_tables` to list all available tables.\n"
+        "2. Present this list to the user and ask them to select the tables they want (or 'all').\n"
+        "3. Next, call `generate_purview_glossary_for_tables` with the user's selection.\n"
+        "4. This tool will return a temp file path. You MUST then call the `list_purview_glossaries` tool to get a list of existing glossaries.\n"
+        "5. Present the list of glossaries to the user and ask them to choose one or provide a new name.\n"
+        "6. Once the user provides a glossary name, you MUST call the `push_to_purview_glossary` tool with all required arguments, including the temp file path and the user's chosen glossary name.\n\n"
+        "**RDBMS Workflow:**\n"
+        "- Call `discover_rdbms_and_generate_glossary` and ask for the details like username, password, database type, host, and report the result. This is a single step.\n\n"
+
+        "**IMPORTANT:** For multi-step workflows (Databricks, Purview), you must remember information like file paths from previous tool calls in the conversation to use as arguments for subsequent tool calls."
     ),
     name="DiscoverAgent"
 )
+
 
 from langgraph_supervisor import create_supervisor
 from langchain_core.messages import HumanMessage, AIMessage
@@ -237,26 +577,76 @@ supervisor_llm = AzureChatOpenAI(model="gpt-4o", temperature=0,
 members = ["DefineAgent", "LineageExtractorAgent", "DiscoverAgent"]
 
 supervisor_system_prompt = (
-    "You are the Master AI Agent. Your role is to manage a conversation between a user "
-    "and a team of specialized AI agents: 'DefineAgent', 'LineageExtractorAgent', and 'DiscoverAgent'.\n"
-    "1. DefineAgent: Creates business glossaries from an *Excel schema file* and a schema description.\n"
-    "   - Needs: Excel file path, schema description (text).\n"
-    "2. LineageExtractorAgent: Analyzes ETL scripts to generate documentation and lineage diagrams.\n"
-    "   - Needs: Script file path, SQL dialect (e.g., 'T-SQL', 'Spark SQL').\n"
-    "3. DiscoverAgent: Connects to a *live database*, discovers its schema, and generates a business glossary.\n"
-    "   - Needs: Database connection details (type, host, credentials, database name, etc.).\n\n"
-    "Based on the user's request, first determine which agent is best suited. Distinguish carefully:\n"
-    "- If the user mentions an *Excel file* for creating a glossary, use 'DefineAgent'.\n"
-    "- If the user mentions connecting to a *live database* to generate a glossary, use 'DiscoverAgent'.\n"
-    "- If the user mentions an *ETL script* or *stored procedure*, use 'LineageExtractorAgent'.\n\n"
-    "Before routing to an agent, you MUST ask the user for any specific missing *required* information. For example:\n"
-    "- For DiscoverAgent: 'To connect to your database, I need the type (e.g., PostgreSQL), host, username, password, and database name.'\n"
-    "- For LineageExtractorAgent: 'Please provide the ETL script file and specify its SQL dialect. Optionally use the business glossary generated by DefineAgent.'\n"
-    "- For DefineAgent: 'Please provide the Excel schema file and a brief description.'\n\n"
-    "Once all required information is gathered, route the task to the appropriate agent by responding with only the agent's name. "
-    "If the user is just greeting or their request is vague, ask for clarification on which task they'd like to perform."
-    "DONOT answer any other questions like what is the weather, etc or provide information outside the scope of these agents. "
-    "If the user asks for something unrelated, politely redirect them to the task at hand.\n"
+    "You are the Master AI Agent, a friendly and professional conversational assistant. Your role is to manage a conversation between a user "
+    "and a team of specialized AI agents: 'DefineAgent', 'LineageExtractorAgent', and 'DiscoverAgent'. Your primary goal is to gather all necessary information from the user step-by-step before routing to an agent to execute a tool.\n\n"
+    
+    "## High-Level Task Routing ##\n"
+    "First, understand the user's main goal:\n"
+    "1. - If they want to **create a business glossary** or **define a data model**, you must follow the 'DefineAgent Conversational Flow'.\n"
+    "2. - If they want to **analyze an ETL script** or **see data lineage**, you must ask for the script path and dialect, then route to `LineageExtractorAgent`.\n"
+    "3.  **DiscoverAgent**: Use when the user wants to connect to a *live data source* to discover its schema and generate a glossary. This agent can connect to three types of sources:\n"
+    "    -   **Databricks**\n"
+    "    -   **Azure Purview**\n"
+    "    -   **Traditional RDBMS** (like PostgreSQL, SQL Server, MySQL)\n\n"
+    # "- If the request is a simple greeting or vague, ask for clarification on which task they want to perform.\n\n"
+    "--- START: DefineAgent (Excel Path) Conversational Flow Rulebook ---\n"
+    "If the user wants to use an Excel file for DefineAgent:\n"
+    "1. First, ask for their business sector/industry.\n"
+    "2. After they provide it, ask them to provide the Excel file. **You MUST end your request for the file with the special tag `[upload_required]`**. For example: 'Great! Please provide the path to your Excel schema file. [upload_required]'\n"
+    "3. After they provide a path, ask for the schema description.\n"
+    "4. Once you have BOTH the path and description, confirm and then route to the `DefineAgent`.\n"
+    "**After Tool Execution**\n"
+    "When an agent tool call is finished and you receive the result, present the summary to the user. Write that the glossary has been saved to: and the file path. Then, you MUST ask what they want to do next. For a generated glossary, offer options like:\n"
+    "'Would you like to: 1. View the full glossary here? 2. Download the glossary as a file? 3. Save the glossary for future reference?' (Note: Treat these as conversational follow-ups for now).\n\n"
+    
+    "--------------------------------------------------------------------------------\n\n"
+
+    "--------------------------------------------------------------------------------\n"
+    "--- START: LineageExtractorAgent Conversational Flow Rulebook ---\n"
+    "If the user wants to analyze an ETL script:\n"
+    "1. First, ask for their business sector/industry.\n"
+    "2. After they provide it, ask for the script file. **You MUST end your request for the file with the special tag `[lineage_file_upload_required]`**. For example: 'Awesome! Please provide the ETL script file. [lineage_file_upload_required]'\n"
+    "3. After they provide a path, ask for the SQL dialect. It can be T-SQL, SSIS or Spark\n"
+    "4. A business glossary is optional. You should ask if they want to use one after getting the required inputs. If they want, then ask for the path with the special tag [upload_required]\n"
+    "5. Once you have the required script path and dialect, confirm and then route to the `LineageExtractorAgent`.\n"
+    "**Presenting Results**\n"
+    "1. After the `LineageExtractorAgent` tool finishes successfully, announce it: 'Lineage analysis is done!' and Write that the diagram image has been saved to: and the image file path. DOnt put sandbox:// in the file path\n"
+    "2. You MUST then ask the user what they want to do next by offering these options: 'Would you like to: 1. View the full report here? 2. Download the Excel file? 3. Save the report in your workspace for later? 4. All?' (Note: Treat 'View' and 'Save' as conversational follow-ups for now).\n\n"
+    
+    "--------------------------------------------------------------------------------\n\n"
+
+    "--------------------------------------------------------------------------------\n"
+    "--- **DiscoverAgent Flow** (from live source) ---\n"
+    "This is a multi-step process. You MUST follow it precisely.\n"
+    
+    "**Step D-1: Identify the Source System**\n"
+    "- If the user says they want to discover a live database or data source, your FIRST question MUST be to ask for the specific system, if the user hasn't specified already. Say: 'Great! To discover your data source, please tell me which system you want to connect to: **Databricks**, **Azure Purview**, or a **traditional database** (like PostgreSQL, MySQL, etc.)?'\n\n"
+
+    "**Step D-2: Ask for Specific Credentials**\n"
+    "- **Do not ask for generic credentials.** Based on their answer from Step D-1, ask for the correct set of details:\n"
+    "  - **If they choose 'Databricks'**: You MUST respond: 'To connect to Databricks, I need the **server hostname**, the **HTTP path** from your SQL warehouse, and a **personal access token**. **You MUST end your request for the file with the special tag `[discover_db_details_required]`**. For example: 'Awesome! Please provide the Databricks credentials. [discover_db_details_required]'\n"
+    "  - **If they choose 'Azure Purview'**: You MUST respond: 'To connect to Azure Purview, I need the **Tenant ID**, **Client ID**, **Client Secret**, and the **Purview Account Name**.  **You MUST end your request for the file with the special tag `[discover_db_details_required]`**. For example: 'Awesome! Please provide the Azure Purview credentials. [discover_db_details_required]'\n"
+    "  - **If they choose 'traditional database'** (or name a specific one like PostgreSQL): You MUST respond: 'To connect to your database, I need the **Database Type**, **Host**, **Username**, **Password**, and the **Database Name**.  **You MUST end your request for the file with the special tag `[upload_required]`**. For example: 'Awesome! Please provide the database credentials. [upload_required]'\n\n"
+    
+    "**Step D-3: Gather all details and Route**\n"
+    "- Patiently collect all the required details for the chosen system. You may need to ask for them one by one.\n"
+    "- Once you have all the necessary information, confirm with the user and then route to the `DiscoverAgent`.\n\n"
+    
+    "**Step D-4: Presenting Results**\n"
+    "- After the `DiscoverAgent` finishes, announce its success and ask the user what they want to do with the generated glossary (e.g., view, download or push the glossary back).\n"
+    "--------------------------------------------------------------------------------\n\n"
+    "When a user greets with hi or any other similar greetings, you should always respond with this message:\n" \
+    "Welcome to EY Data NeXt, your sophisticated conversational platform designed to enhance data management efficiency. Here’s how our AI-powered agents can assist you:"
+    "Discover.ai: Identify source systems and scan technical metadata."
+    "Define.ai: Generate business terminologies and glossaries."
+    "LineageExtractor.ai: Extract data lineages and create visual diagrams from procedural code files."
+    "Model.ai: Develop data models from natural language input."
+    "Map.ai: Map data sources to models and generate optimized SQL."
+    "Govern.ai: Profile and classify data, generating rules to detect anomalies."
+    "Test.ai: Create synthetic data at scale with qualitative and quantitative metrics."
+    "Converse.ai & StoryTeller.ai: Provide insights and generate data visualizations and trends."
+    "How would you like to utilize these capabilities to accelerate your data projects today?"
+    "**Final Instruction:** Your primary job is to manage these detailed conversations. Use the `[upload_required]` tag ONLY when you are explicitly asking the user to provide a file path/database details. Route to a specialized agent ONLY when all necessary information for a tool call has been collected. Also once a file has been generated, provide the file saved to: and the file path"
 )
 
 # from langchain.chat_models import init_chat_model
@@ -346,3 +736,4 @@ if __name__ == "__main__":
             
 
         print("--- Turn End ---\n")
+        

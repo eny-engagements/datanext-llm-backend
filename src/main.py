@@ -1,24 +1,34 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
+from enum import Enum
 import uuid
 import os
 import shutil
+
 # --- Import your LangGraph setup ---
 # It's best practice to put your agent creation logic in a separate file
 # (e.g., 'agent_factory.py') and import the final compiled graph.
 # For this example, we'll assume it's all in one place for simplicity,
 # but we'll import the graph 'app' from a file named 'langgraph_setup.py'.
-
+ 
 # Let's assume you've moved all the LangGraph code (tools, agents, supervisor)
 # into a file named 'langgraph_setup.py' and it exposes the compiled graph as 'master_agent_graph'
 from langgraph_setup import master_agent_graph, members # Assuming 'members' is also exposed
-from langchain_core.messages import HumanMessage, AIMessage
-
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+import regex as re
+ 
+ALLOWED_DIRECTORIES = {
+    "define": "C:\EY\ey-genai-datanext-frontend\public",
+    "lineage": "C:\EY\ey-genai-datanext-frontend\public",
+    "discover": "C:\EY\ey-genai-datanext-frontend\public",
+}
 
 UPLOADS_DIR = "user_uploads"
 os.makedirs(UPLOADS_DIR, exist_ok=True)
-
+ 
 # --- Initialize FastAPI App ---
 app = FastAPI(
     title="Master AI Agent API",
@@ -26,176 +36,191 @@ app = FastAPI(
     version="1.0.0",
 )
 
+origins = [
+    "http://localhost",
+    "http://localhost:5173",  # The origin of your React frontend
+    # You can add other origins here if needed, e.g., your production frontend URL
+]
+ 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Specifies the allowed origins
+    allow_credentials=True, # Allows cookies to be included in requests
+    allow_methods=["*"],    # Allows all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],    # Allows all headers
+)
 # --- Pydantic Models for API Request/Response ---
 # This defines the expected structure of the JSON data for your API endpoints.
-
+class AgentName(str, Enum):
+    DISCOVER = "DISCOVER"
+    DEFINE = "DEFINE"
+    LINEAGE = "LINEAGE" # Or LineageExtractor
+ 
+class ResponseType(str, Enum):
+    CHAT = "CHAT"
+    DATASOURCE_FORM = "DATASOURCE_FORM" # For asking for DB details or file uploads
+    LINEAGE_FORM = "LINEAGE_FORM" # For lineage extraction requests
+    DISCOVER_FORM = "DISCOVER_FORM" # For discover agent uploads/db connections
+    FILE = "FILE" # For returning a file link
+ 
+# --- UPDATED Pydantic Models ---
 class ChatRequest(BaseModel):
-    session_id: str  # To track different user conversations
-    message: str
-    uploaded_files: Optional[Dict[str, str]] = None # e.g., {"script_file": "/path/on/server/to/script.sql"}
+    question: str
+    agent: Optional[AgentName] = None # User can optionally specify an agent
+    chat_history: List[Dict[str, str]] # e.g., [{"role": "user", "content": "..."}, {"role": "ai", "content": "..."}]
+    info: Optional[Dict[str, Any]] = None # Generic JSON for extra info like file paths
+ 
+class FileResponseData(BaseModel):
+    server_path: str
+    filename: str
 
 class ChatResponse(BaseModel):
-    session_id: str
-    ai_response: str
-    is_clarification_question: bool # Lets the frontend know if the AI is waiting for an answer
-    is_task_complete: bool # Lets the frontend know if a tool finished running
-
+    content: str # The main markdown/text response
+    agent: Optional[AgentName] = None # Which agent is responding (or supervisor)
+    responseType: ResponseType
+    response: Dict[str, Any] = {}
+   
 class UploadResponse(BaseModel):
     message: str
     server_path: str
     filename: str
-
-
+ 
+ 
 # --- In-Memory Conversation State Management ---
 # WARNING: This is for demonstration only. It will lose all data if the server restarts.
 # For production, use a database like Redis, a file-based session store, or a managed service.
 conversation_histories: Dict[str, List] = {}
-
+ 
 # --- API Endpoints ---
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(request: ChatRequest):
+def convert_to_langchain_messages(history: List[Dict[str, str]]) -> List[BaseMessage]:
+    messages = []
+    for item in history:
+        role = item.get("role", "user").lower()
+        content = item.get("content", "")
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "ai" or role == "assistant": # Accept both "ai" and "assistant" for flexibility
+            messages.append(AIMessage(content=content))
+    return messages
+ 
+@app.post("/api/master", response_model=ChatResponse)
+async def master_chat(request: ChatRequest):
     """
-    Endpoint to send a message to the Master AI Agent and get a response.
+    This is the single endpoint for all chat interactions with the Master AI Agent.
+    It takes the user's question and the entire conversation history.
     """
-    session_id = request.session_id
-    user_input = request.message
-
-    # Retrieve or initialize the conversation history for the session
-    if session_id not in conversation_histories:
-        conversation_histories[session_id] = []
-
-    current_history = conversation_histories[session_id]
-    current_history.append(HumanMessage(content=user_input))
-
-    # In a real app, file uploads would be handled by a separate endpoint.
-    # That endpoint would save the file to the server and return its path.
-    # The frontend would then include this path in the ChatRequest.
-    # For now, we assume paths are provided directly.
-    uploaded_files = request.uploaded_files or {}
-
-    # Prepare input for the LangGraph stream
-    graph_input = {
-        "messages": current_history,
-        # In a real system, you'd manage uploaded files per session too.
-        # For simplicity, we pass them directly.
-    }
-
+    # 1. Convert the incoming chat history from the request to Langchain's format
+    langchain_history = convert_to_langchain_messages(request.chat_history)
+   
+    # 2. Add the user's new question to the history
+    # We build a detailed message to help the supervisor parse inputs easily
+    user_message_content = request.question
+    if request.info and request.info.get("uploaded_file_path"):
+        user_message_content += f" (Note: I have just uploaded a file available at path: {request.info['uploaded_file_path']})"
+   
+    langchain_history.append(HumanMessage(content=user_message_content))
+   
+    # Prepare the input for the LangGraph, including the user's explicit agent choice if provided
+    graph_input = {"messages": langchain_history}
+    if request.agent:
+        # We can add this to the last message content to strongly guide the supervisor
+        langchain_history[-1].content += f" (User has specified intent for agent: {request.agent.value})"
+   
     ai_response_content = ""
-    is_task_complete = False
-    
-    # Stream the graph execution
+    responding_agent_name = "supervisor"
+   
+    # 3. Stream the graph execution
     async for event in master_agent_graph.astream(graph_input, {"recursion_limit": 25}):
-        # Look for the supervisor or an agent's response
         for agent_name, agent_output in event.items():
             if isinstance(agent_output, dict) and "messages" in agent_output:
                 last_message = agent_output["messages"][-1]
-                if isinstance(last_message, AIMessage):
-                    # Check if it's a final, user-facing message
-                    if last_message.content and last_message.content not in members and last_message.content != "supervisor":
+                if isinstance(last_message, AIMessage) and last_message.content:
+                    if last_message.content not in members and last_message.content != "supervisor":
                         ai_response_content = last_message.content
-                        # Heuristic: If the message contains "saved to" or "complete", the task is likely done
-                        if "saved to" in ai_response_content.lower() or "complete" in ai_response_content.lower():
-                            is_task_complete = True
-
-    # Update the conversation history with the AI's final response
-    if ai_response_content:
-        current_history.append(AIMessage(content=ai_response_content))
-    else:
-        # If no explicit message was found, it might be an unhandled state.
-        ai_response_content = "I'm processing your request. Please wait or provide more details if prompted."
-
-    # Determine if the AI's response is a question (heuristic)
-    is_clarification = '?' in ai_response_content
-
+                        responding_agent_name = last_message.name or agent_name
+ 
+    if not ai_response_content:
+        ai_response_content = "I'm sorry, I encountered an issue and cannot respond right now. Please try rephrasing."
+ 
+    # 4. Determine the responseType based on the AI's response content
+    final_response_type = ResponseType.CHAT
+    final_response_data = {}
+ 
+    if "[upload_required]" in ai_response_content or "provide the file" in ai_response_content.lower() or "connection details" in ai_response_content.lower():
+        final_response_type = ResponseType.DATASOURCE_FORM
+        ai_response_content = ai_response_content.replace("[upload_required]", "").strip()
+    elif "[lineage_file_upload_required]" in ai_response_content.lower() or "lineage form" in ai_response_content.lower():
+        final_response_type = ResponseType.LINEAGE_FORM
+        ai_response_content = ai_response_content.replace("[lineage_file_upload_required]", "").strip()
+    elif "[discover_db_details_required]" in ai_response_content.lower() or "discover form" in ai_response_content.lower():
+        final_response_type = ResponseType.DISCOVER_FORM
+        ai_response_content = ai_response_content.replace("[discover_db_details_required]", "").strip()
+    elif "saved to:" in ai_response_content.lower() or "download link" in ai_response_content.lower():
+        final_response_type = ResponseType.FILE
+        # Use regex to find a file path in the response string
+        path_match = re.search(r"saved to:\s*`?([^`]+?\.(?:xlsx|csv|png|txt))`?", ai_response_content, re.IGNORECASE)
+        if path_match:
+            server_path = path_match.group(1).strip()
+            filename = os.path.basename(server_path)
+            final_response_data = FileResponseData(filename=filename, server_path=server_path).dict()
+    # 5. Determine which agent finally responded
+    final_agent_enum = None
+    if "DefineAgent" in responding_agent_name:
+        final_agent_enum = AgentName.DEFINE
+    elif "LineageExtractorAgent" in responding_agent_name:
+        final_agent_enum = AgentName.LINEAGE
+    elif "DiscoverAgent" in responding_agent_name:
+        final_agent_enum = AgentName.DISCOVER
+ 
     return ChatResponse(
-        session_id=session_id,
-        ai_response=ai_response_content,
-        is_clarification_question=is_clarification,
-        is_task_complete=is_task_complete,
+        content=ai_response_content,
+        agent=final_agent_enum,
+        responseType=final_response_type,
+        response=final_response_data,
     )
-
-@app.get("/new_session")
-async def get_new_session():
-    """Endpoint to start a new chat session."""
-    session_id = str(uuid.uuid4())
-    conversation_histories[session_id] = []
-    # Create a dedicated folder for this session's uploads
-    os.makedirs(os.path.join(UPLOADS_DIR, session_id), exist_ok=True)
-    return {"session_id": session_id}
-
-# --- NEW FILE UPLOAD ENDPOINT ---
-@app.post("/upload/{session_id}", response_model=UploadResponse)
-async def upload_file(session_id: str, file: UploadFile = File(...)):
+@app.get("/api/documents/{filename}")
+async def get_document(filename: str):
+    found_path = None
+    for key, directory in ALLOWED_DIRECTORIES.items():
+        potential_path = os.path.join(directory, filename)
+        print(potential_path)
+        if os.path.exists(potential_path):
+            if os.path.abspath(potential_path).startswith(directory):
+                found_path = potential_path
+                break
+    if found_path:
+        print(f"Serving file from: {found_path}")
+        return FileResponse(path=found_path, filename=filename)
+    else:
+        raise HTTPException(status_code=404, detail="File not found or access denied")
+   
+@app.post("/api/upload", response_model=UploadResponse)
+async def upload_file(file: UploadFile = File(...)):
     """
-    Endpoint to upload a file for a specific chat session.
-    The file is saved on the server, and its path is returned.
+    Endpoint to upload a file. Saves the file to a temporary directory
+    on the server and returns its path. This path should then be passed
+    in the `info` field of the `/api/master` request.
     """
-    if session_id not in conversation_histories:
-        raise HTTPException(status_code=404, detail="Session not found. Please start a new session.")
-
     try:
-        session_upload_dir = os.path.join(UPLOADS_DIR, session_id)
-        # Security: Sanitize the filename to prevent directory traversal attacks
+        # Using a general upload directory. For multi-user systems,
+        # session-specific or user-specific folders are recommended.
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+       
         safe_filename = os.path.basename(file.filename)
         if not safe_filename:
             raise HTTPException(status_code=400, detail="Invalid filename.")
-            
-        file_path = os.path.join(session_upload_dir, safe_filename)
-
-        # Save the file
+       
+        # Add a unique prefix to avoid filename collisions
+        unique_filename = f"{uuid.uuid4()}_{safe_filename}"
+        file_path = os.path.join(UPLOADS_DIR, unique_filename)
+ 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
+ 
         return UploadResponse(
             message=f"File '{safe_filename}' uploaded successfully.",
-            server_path=file_path, # Return the path on the server
+            server_path=file_path,
             filename=safe_filename
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File upload failed: {e}")
-
-# --- UPDATED CHAT ENDPOINT ---
-@app.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(request: ChatRequest):
-    """
-    Endpoint to send a message to the Master AI Agent and get a response.
-    This message can now contain references to files uploaded via the /upload endpoint.
-    """
-    session_id = request.session_id
-    user_input = request.message
-
-    if session_id not in conversation_histories:
-        raise HTTPException(status_code=404, detail="Session not found. Please start a new session.")
-
-    current_history = conversation_histories[session_id]
-    current_history.append(HumanMessage(content=user_input))
-
-    graph_input = {"messages": current_history}
-    ai_response_content = ""
-    is_task_complete = False
-    
-    # Use the same streaming logic as before
-    async for event in master_agent_graph.astream(graph_input, {"recursion_limit": 25}):
-        for agent_name, agent_output in event.items():
-            if isinstance(agent_output, dict) and "messages" in agent_output:
-                last_message = agent_output["messages"][-1]
-                if isinstance(last_message, AIMessage):
-                    if last_message.content and last_message.content not in members and last_message.content != "supervisor":
-                        ai_response_content = last_message.content
-                        if "saved to" in ai_response_content.lower() or "complete" in ai_response_content.lower():
-                            is_task_complete = True
-    
-    if ai_response_content:
-        current_history.append(AIMessage(content=ai_response_content))
-    else:
-        ai_response_content = "I am processing your request. There might not be an immediate response."
-
-    is_clarification = '?' in ai_response_content and not is_task_complete
-
-    return ChatResponse(
-        session_id=session_id,
-        ai_response=ai_response_content,
-        is_clarification_question=is_clarification,
-        is_task_complete=is_task_complete,
-    )
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")

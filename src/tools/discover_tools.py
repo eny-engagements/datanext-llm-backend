@@ -4,16 +4,7 @@ import shutil
 import asyncio
 from langchain_core.tools import tool
 from typing import Optional
-from etl_documentation import analyse_sp as actual_lineage_extractor_analyse_sp
-from etl_documentation import visualise_etl as actual_lineage_extractor_visualise_etl
-from etl_documentation import create_etl_documentation_excel as actual_lineage_extractor_create_excel
-from etl_documentation import get_glossary as actual_lineage_extractor_get_glossary
-
-from define import read_schema_in_chunks_and_batch as actual_define_read_schema
-from define import parallel_description as actual_define_parallel_description
-from define import create_business_glossary_excel as actual_define_create_excel
-
-from discover import ( create_db_engine, get_schemas, get_tables, create_table_overview, 
+from use_cases.discover import ( create_db_engine, get_schemas, get_tables, create_table_overview, 
                        create_glossary, generate_csv, get_catalogs_databricks, get_tables_databricks,
                         get_schemas_databricks, fetch_table_metadata, generate_df, apply_comments_to_unity_catalog,
                         list_purview_sql_tables,
@@ -21,104 +12,13 @@ from discover import ( create_db_engine, get_schemas, get_tables, create_table_o
                         list_existing_purview_glossaries, 
                         push_glossary_terms_to_purview, 
                         create_purview_glossary,
-                        update_unity,
                         sanitize_term_name )
 import json
 
-DEFINE_AI_OUTPUT_DIR = "./output/business glossary"
-LINEAGE_EXTRACTOR_OUTPUT_DIR = "./output/lineage"
-DISCOVER_AI_OUTPUT_DIR = "./output/discovered glossary"
-os.makedirs(DEFINE_AI_OUTPUT_DIR, exist_ok=True)
-os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR, exist_ok=True)
+DISCOVER_AI_OUTPUT_DIR = "C:/EY/ey-genai-datanext-frontend/public"
 os.makedirs(DISCOVER_AI_OUTPUT_DIR, exist_ok=True)
 
-@tool
-def define_data_model_from_excel(excel_path: str, schema_description: str) -> str:
-    """
-    Creates a business glossary from an input Excel file...
-    """
-    print(f"--- TOOL: define_data_model_from_excel called with excel_path: {excel_path} ---")
-    if not os.path.exists(excel_path): return f"Error: Input Excel file not found at '{excel_path}'."
-    if not schema_description: return "Error: Schema description is required."
 
-    try:
-        # --- FIX: Ensure output directory exists ---
-        os.makedirs(DEFINE_AI_OUTPUT_DIR, exist_ok=True)
-        # --- END FIX ---
-
-        _, schema_info_batches = actual_define_read_schema(excel_path)
-        all_glossary_parts = []
-        for batch in schema_info_batches:
-            glossary_part = actual_define_parallel_description(schema_description, batch, data_dictionary=[])
-            all_glossary_parts.append(glossary_part)
-        final_glossary_markdown = "  \n".join(all_glossary_parts)
-
-        schema_name_from_path = os.path.basename(excel_path)
-        # Note: Your actual_define_create_excel also saves the file. We'll rely on its path logic.
-        actual_define_create_excel(schema_name_from_path, final_glossary_markdown)
-
-        output_excel_filename = schema_name_from_path.replace(".xlsx", "") + "_with_Business_Glossary.xlsx"
-        output_excel_path = os.path.join(DEFINE_AI_OUTPUT_DIR, output_excel_filename)
-
-        return f"Business Glossary generation complete. Excel output saved to: {output_excel_path}"
-    except Exception as e:
-        return f"Error in define_data_model_from_excel: {e}"
-
-@tool
-def extract_etl_lineage_and_documentation(
-    script_path: str,
-    dialect: str,
-    additional_context: Optional[str] = "N/A",
-    business_glossary_excel_path: Optional[str] = None
-) -> str:
-    """
-    Analyzes an ETL script (SQL or text file) to generate documentation, a data lineage diagram,
-    and an Excel report.
-    Required inputs are the path to the script file and the SQL dialect (e.g., 'T-SQL', 'Spark SQL').
-    Optional inputs include additional natural language context and the path to a business glossary Excel file.
-    Returns a summary message with paths to the generated lineage diagram and Excel documentation.
-    """
-    print(f"--- TOOL: extract_etl_lineage_and_documentation called with script_path: {script_path}, dialect: {dialect} ---")
-    if not os.path.exists(script_path):
-        return f"Error: Input script file not found at '{script_path}'."
-    if not dialect:
-        return "Error: SQL dialect is required (e.g., 'T-SQL', 'Spark SQL')."
-
-    full_context = additional_context
-    if business_glossary_excel_path:
-        if not os.path.exists(business_glossary_excel_path):
-            print(f"Warning: Glossary file '{business_glossary_excel_path}' not found, proceeding without it.")
-        else:
-            try:
-                with open(script_path, 'r', encoding='utf-8') as f:
-                    script_content = f.read()
-                glossary_context_str = actual_lineage_extractor_get_glossary(script_content, business_glossary_excel_path)
-                full_context += f"\n\nBusiness Glossary (from {os.path.basename(business_glossary_excel_path)}):\n{glossary_context_str}"
-            except Exception as e:
-                print(f"Warning: Could not process glossary file '{business_glossary_excel_path}': {e}. Proceeding without it.")
-
-    try:
-        report_name = os.path.basename(script_path)
-        with open(script_path, 'r', encoding='utf-8') as f:
-            script_content_for_analysis = f.read()
-
-        df_analysis, df_filled_analysis = actual_lineage_extractor_analyse_sp(
-            script_content_for_analysis,
-            full_context,
-            dialect
-        )
-        diagram_path = actual_lineage_extractor_visualise_etl(script_content_for_analysis, report_name, df_analysis)
-        actual_lineage_extractor_create_excel(df_filled_analysis, report_name)
-        output_excel_filename = report_name.replace(".txt", " ETL Documentation.xlsx").replace(".sql", " ETL Documentation.xlsx")
-        output_excel_path = os.path.join(LINEAGE_EXTRACTOR_OUTPUT_DIR, output_excel_filename)
-
-        # The markdown table (df_analysis.to_markdown()) could be returned if the agent is prompted to display it.
-        return (f"ETL Lineage and Documentation generation complete. "
-                f"Lineage Diagram saved to: {diagram_path}. "
-                f"Excel documentation saved to: {output_excel_path}.")
-    except Exception as e:
-        return f"Error in extract_etl_lineage_and_documentation: {e}"
-    
 @tool
 def discover_database_and_generate_glossary(db_type: str, host: Optional[str] = None, username: Optional[str] = None, password: Optional[str] = None, database: Optional[str] = None, port: Optional[str] = None, service: Optional[str] = None, authentication: Optional[str] = None) -> str:
     """
@@ -162,17 +62,18 @@ def discover_database_and_generate_glossary(db_type: str, host: Optional[str] = 
         # Generate glossary from the discovered metadata
         schema_data_json = json.dumps(overview)
         formatted_glossary, csv_data = create_glossary(schema_data_json)
-        csv_content = generate_df(csv_data)
+        csv_content = generate_csv(csv_data)
+
         # Save CSV output
         db_name_for_file = database or service or "discovered_db"
         output_csv_filename = f"discovered_glossary_{db_name_for_file}.csv"
         output_csv_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, output_csv_filename)
-        csv_content.to_csv(output_csv_path, index=False, encoding='utf-8')
+        with open(output_csv_path, "w", newline="") as f:
+            f.write(csv_content)
 
         return f"Database discovery and glossary generation complete. CSV output saved to: {output_csv_path}"
     except Exception as e:
         return f"An error occurred during discovery and glossary generation: {e}"
-
 # --- NEW DATABRICKS TOOL 1: FOR DISCOVERY ---
 @tool
 def discover_databricks_structure(server_hostname: str, http_path: str, access_token: str) -> str:
@@ -236,8 +137,8 @@ def generate_databricks_glossary_for_schemas(server_hostname: str, http_path: st
     try:
         # Robust path logic
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        output_base_dir = os.path.join(script_dir, '..', 'output', 'business glossary', 'discovered glossary')
-        os.makedirs(output_base_dir, exist_ok=True)
+        # output_base_dir = os.path.join(script_dir, '..', 'output', 'business glossary', 'discovered glossary')
+        # os.makedirs(output_base_dir, exist_ok=True)
         
         config = {
             'rdbms': 'Databricks',
@@ -276,11 +177,11 @@ def generate_databricks_glossary_for_schemas(server_hostname: str, http_path: st
 
         # Save the final, user-facing CSV
         output_csv_filename = f"discovered_glossary_databricks_{catalog}_{'_'.join(schema_list)}.csv"
-        output_csv_path = os.path.join(output_base_dir, output_csv_filename)
+        output_csv_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, output_csv_filename)
         df_glossary.to_csv(output_csv_path, index=False, encoding='utf-8')
         
         # --- NEW LOGIC: Save a temporary file for the next tool ---
-        temp_glossary_path = os.path.join(output_base_dir, "temp_glossary_for_update.csv")
+        temp_glossary_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, "temp_glossary_for_update.csv")
         df_glossary.to_csv(temp_glossary_path, index=False, encoding='utf-8')
 
         # --- NEW LOGIC: Return a message that includes the temp path for the agent ---
@@ -318,7 +219,7 @@ def update_unity_catalog(server_hostname: str, http_path: str, access_token: str
         schema_list = [s.strip() for s in schemas.split(',')]
 
         # Call the backend function to apply comments
-        success_count, failures = update_unity(engine, catalog, schema_list, df_glossary)
+        success_count, failures = apply_comments_to_unity_catalog(engine, catalog, schema_list, df_glossary)
 
         if failures:
             failed_str = "\n".join([f"- {tbl}.{col}: {err}" for tbl, col, err in failures])
@@ -398,7 +299,7 @@ def generate_purview_glossary_for_tables(tenant_id: str, client_id: str, client_
         
         df_glossary = generate_df(csv_data)
         
-        temp_glossary_path = os.path.join(output_base_dir, "temp_purview_glossary_for_update.csv")
+        temp_glossary_path = os.path.join(DISCOVER_AI_OUTPUT_DIR, "temp_purview_glossary_for_update.csv")
         df_glossary.to_csv(temp_glossary_path, index=False, encoding='utf-8')
         
         return (f"Glossary generation for {len(selected_tables)} Purview table(s) complete. "
@@ -479,201 +380,3 @@ def push_to_purview_glossary(tenant_id: str, client_id: str, client_secret: str,
         import traceback
         traceback.print_exc()
         return f"An unexpected error occurred while pushing to Purview: {e}"
-
-
-# Step 2
-from langchain_openai import AzureChatOpenAI
-from langgraph.prebuilt import create_react_agent
-
-
-agent_llm = AzureChatOpenAI(
-    azure_deployment="gpt-4o",
-    openai_api_version="2024-02-15-preview",
-    api_key="901cce4a4b4045b39727bf1ce0e36219",
-    azure_endpoint="https://aifordata-azureopenai.openai.azure.com/",
-    temperature=0,
-    max_tokens=4096
-    )
-
-define_agent = create_react_agent(
-    model=agent_llm, 
-    tools=[define_data_model_from_excel],
-    prompt=(
-        "You are a service agent named DefineAgent. Your only job is to execute the `define_data_model_from_excel` tool. "
-        "Use the `excel_path` and `schema_description` from the conversation history to call the tool. "
-        "**After the tool runs, you MUST report the result back to the user as your final answer.**"
-    ),
-    name="DefineAgent"
-)
-
-lineage_extractor_agent = create_react_agent(
-    model=agent_llm,
-    tools=[extract_etl_lineage_and_documentation],
-    prompt=(
-        "You are the LineageExtractorAgent, an expert in analyzing ETL scripts (SQL or Spark SQL) "
-        "to produce documentation and data lineage diagrams. You can optionally use a "
-        "business glossary (Excel file) for better context. "
-        "To use the 'extract_etl_lineage_and_documentation' tool, you *must* have the path to the script file "
-        "and the SQL dialect. A business glossary path and additional context are optional. "
-        "If the script path or dialect is missing, ask the user to provide them clearly. "
-        "If they mention a glossary or context, try to use that too."
-    ),
-    name="LineageExtractorAgent"
-)
-
-discover_agent = create_react_agent(
-    model=agent_llm,
-    tools=[
-        # RDBMS Tool
-        discover_database_and_generate_glossary,
-        # Databricks Tools
-        discover_databricks_structure,
-        generate_databricks_glossary_for_schemas,
-        update_unity_catalog,
-        # Purview Tools - ADD THESE
-        discover_purview_tables,
-        generate_purview_glossary_for_tables,
-        list_purview_glossaries,
-        push_to_purview_glossary
-    ],
-    prompt=(
-        "You are the DiscoverAgent, a specialist in generating glossaries and updating data catalogs.\n"
-        "You must guide the user through a multi-step process depending on the data source.\n\n"
-        "**Databricks Workflow:**\n"
-        "1. Call `discover_databricks_structure` to list catalogs/schemas.\n"
-        "2. Ask user to select catalog/schemas.\n"
-        "3. Call `generate_databricks_glossary_for_schemas`.\n"
-        "4. The tool returns a temp file path. Ask the user if they want to update Unity Catalog.\n"
-        "5. If 'yes' or a input which means that you should push the glossary, call `update_unity_catalog` with all required arguments, including the temp file path from conversation history.\n\n"
-        "**Azure Purview Workflow:**\n"
-        "1. First, call `discover_purview_tables` to list all available tables.\n"
-        "2. Present this list to the user and ask them to select the tables they want (or 'all').\n"
-        "3. Next, call `generate_purview_glossary_for_tables` with the user's selection.\n"
-        "4. This tool will return a temp file path. You MUST then call the `list_purview_glossaries` tool to get a list of existing glossaries.\n"
-        "5. Present the list of glossaries to the user and ask them to choose one or provide a new name.\n"
-        "6. Once the user provides a glossary name, you MUST call the `push_to_purview_glossary` tool with all required arguments, including the temp file path and the user's chosen glossary name.\n\n"
-        "**RDBMS Workflow:**\n"
-        "- Call `discover_rdbms_and_generate_glossary` and report the result. This is a single step.\n\n"
-        "**IMPORTANT:** For multi-step workflows (Databricks, Purview), you must remember information like file paths from previous tool calls in the conversation to use as arguments for subsequent tool calls."
-    ),
-    name="DiscoverAgent"
-)
-from langgraph_supervisor import create_supervisor
-from langchain_core.messages import HumanMessage, AIMessage
-
-supervisor_llm = AzureChatOpenAI(model="gpt-4o", temperature=0,    
-                                 openai_api_version="2024-02-15-preview",
-    api_key="901cce4a4b4045b39727bf1ce0e36219",
-     azure_endpoint="https://aifordata-azureopenai.openai.azure.com/") 
-
-members = ["DefineAgent", "LineageExtractorAgent", "DiscoverAgent"]
-
-supervisor_system_prompt = (
-    "You are the Master AI Agent. Your role is to manage a conversation between a user "
-    "and a team of specialized AI agents: 'DefineAgent', 'LineageExtractorAgent', and 'DiscoverAgent'.\n\n"
-    "**Agent Capabilities:**\n"
-    "1.  **DefineAgent**: Creates business glossaries from an *Excel schema file* and a text description.\n"
-    "2.  **LineageExtractorAgent**: Analyzes ETL scripts to generate documentation.\n"
-    "3.  **DiscoverAgent**: Connects to a *live data source*, discovers its schema, and generates a business glossary. It can connect to three types of sources:\n"
-    "    -   **Databricks**: Needs a server hostname, HTTP path, access token\n"
-    "    -   **Azure Purview**: Needs a tenant ID, client ID, client secret, and the Purview account name.\n"
-    "    -   **Traditional RDBMS** (like PostgreSQL, SQL Server): Needs the database type, host, username, password, and database name.\n\n"
-    "**Your Task:**\n"
-    "1.  Based on the user's request, determine the primary goal (e.g., 'create from excel', 'analyze script', 'discover from live database').\n"
-    "2.  If the goal is to discover from a live database, **you must first identify the specific system** (Databricks, Purview, or a standard database like PostgreSQL).\n"
-    "3.  **Crucially, you must ask the user for the specific set of credentials required for that system.** Do NOT ask for a password if they want to connect to Databricks. For example:\n"
-    "    -   If they say 'connect to Databricks', you must respond: 'To connect to Databricks, I need the server hostname, the HTTP path from the SQL warehouse, a personal access token, and the name of the catalog you want to analyze.'\n"
-    "    -   If they say 'connect to Purview', you must respond: 'To connect to Azure Purview, I need the Tenant ID, Client ID, Client Secret, and the Purview Account Name.'\n"
-    "    -   If they say 'connect to our Postgres DB', you must respond: 'To connect to PostgreSQL, I need the host, username, password, and the database name.'\n"
-    "4.  Once all required information for a specific task is gathered, route the task to the appropriate agent by responding with *only* the agent's name (e.g., 'DiscoverAgent').\n"
-    "5.  If the user is just greeting or their request is vague, ask for clarification on which task they'd like to perform."
-    "Do NOT answer any other questions or provide information outside the scope of these agents."
-    )
-
-# from langchain.chat_models import init_chat_model
-
-master_agent_graph = create_supervisor(
-    model=supervisor_llm, 
-    agents=[define_agent, lineage_extractor_agent, discover_agent],
-    prompt=supervisor_system_prompt,
-).compile()
-
-#Step 4
-# Helper for creating dummy files for testing
-def create_dummy_file(filename, content="dummy content", directory="supervisor_test_inputs"):
-    os.makedirs(directory, exist_ok=True)
-    filepath = os.path.join(directory, filename)
-    with open(filepath, "w") as f:
-        f.write(content)
-    return filepath
-
-if __name__ == "__main__":
-    # Clean up for fresh run 
-    if os.path.exists("supervisor_test_inputs"): shutil.rmtree("supervisor_test_inputs")
-    if os.path.exists(DEFINE_AI_OUTPUT_DIR): shutil.rmtree(DEFINE_AI_OUTPUT_DIR)
-    if os.path.exists(LINEAGE_EXTRACTOR_OUTPUT_DIR): shutil.rmtree(LINEAGE_EXTRACTOR_OUTPUT_DIR)
-    if os.path.exists(DISCOVER_AI_OUTPUT_DIR): shutil.rmtree(DISCOVER_AI_OUTPUT_DIR)
-    os.makedirs("supervisor_test_inputs", exist_ok=True)
-    os.makedirs(DEFINE_AI_OUTPUT_DIR, exist_ok=True)
-    os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR, exist_ok=True)
-    os.makedirs(DISCOVER_AI_OUTPUT_DIR, exist_ok=True)
-
-    # Conversational Loop
-    conversation_history = []
-
-    while True:
-        user_input = input(">>> User: ")
-        if user_input.lower() in ["exit", "quit"]:
-            print("Ending conversation.")
-            break
-
-        conversation_history.append(HumanMessage(content=user_input))
-
-        # If the user mentions uploading a file, we simulate it here for the tools to find.
-        # In a real UI, the UI would handle the upload and provide the path.
-        # For this demo, if user says "using schema.xlsx", we create it.
-        # This is a simplification; robust file path handling from text is hard.
-        # The supervisor prompt instructs it to ASK for paths if unclear.
-        if "schema.xlsx" in user_input.lower():
-            create_dummy_file("schema.xlsx", "Schema Name,Table Name,Column Name\nSALES,ORDERS,ORDER_ID", directory="supervisor_test_inputs")
-            print("(Simulated upload of schema.xlsx to supervisor_test_inputs/schema.xlsx)")
-        if "etl_script.sql" in user_input.lower():
-            create_dummy_file("etl_script.sql", "SELECT * FROM users;", directory="supervisor_test_inputs")
-            print("(Simulated upload of etl_script.sql to supervisor_test_inputs/etl_script.sql)")
-        if "glossary.xlsx" in user_input.lower():
-            create_dummy_file("glossary.xlsx", "Table Name,Column Name,Description\nusers,user_id,User ID", directory="supervisor_test_inputs")
-            print("(Simulated upload of glossary.xlsx to supervisor_test_inputs/glossary.xlsx)")
-
-
-        print("\n--- Master Agent Processing ---")
-        # The supervisor expects a list of messages
-        # For the stream, the input should be a dictionary with a "messages" key
-        events = master_agent_graph.stream({"messages": conversation_history})
-        ai_response_content = "" # To store the last user-facing AI message
-        final_event_message = None
-        print("\n--- Raw Stream Events ---")
-        for event_dict in events:
-            print(event_dict) 
-
-    
-            for agent_name, agent_output in event_dict.items(): 
-                if isinstance(agent_output, dict) and "messages" in agent_output and agent_output["messages"]:
-                    final_event_messages = agent_output["messages"] 
-        print("--- End Raw Stream Events ---\n")
-
-        if final_event_messages: 
-            last_msg_in_event = final_event_messages[-1]
-            if isinstance(last_msg_in_event, AIMessage):
-                
-                if last_msg_in_event.content not in members and last_msg_in_event.content != "supervisor":
-                    ai_response_content = last_msg_in_event.content
-
-        if ai_response_content:
-            print(f"<<< AI: {ai_response_content}")
-            conversation_history.append(AIMessage(content=ai_response_content, name=last_msg_in_event.name or "supervisor"))
-        else:
-            print("<<< AI: (No explicit user-facing message to display from this turn's events. The supervisor might be routing or an agent is processing.)")
-            #If no user-facing message, but supervisor  produced some AIMessage (like a routing instruction),
-            
-
-        print("--- Turn End ---\n")
