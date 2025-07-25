@@ -53,11 +53,12 @@ google-auth==2.40.3
 graphviz==0.21
 greenlet==3.2.3
 h11==0.16.0
+hf-xet==1.1.5
 htmlmin==0.1.12
 httpcore==1.0.9
 httpx==0.28.1
 httpx-sse==0.4.0
-huggingface-hub==0.33.1
+huggingface-hub==0.33.5
 idna==3.10
 ImageHash==4.3.1
 isodate==0.7.2
@@ -71,12 +72,13 @@ jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
 kaleido==1.0.0
 kiwisolver==1.4.8
-langchain==0.3.26
+langchain==0.3.27
 langchain-community==0.3.26
-langchain-core==0.3.67
+langchain-core==0.3.72
+langchain-huggingface==0.3.1
 langchain-openai==0.3.27
-langchain-text-splitters==0.3.8
-langgraph==0.5.0
+langchain-text-splitters==0.3.9
+langgraph==0.5.4
 langgraph-checkpoint==2.1.0
 langgraph-prebuilt==0.5.2
 langgraph-sdk==0.1.72
@@ -140,7 +142,6 @@ python-dotenv==1.1.1
 python-multipart==0.0.20
 pytz==2025.2
 PyWavelets==1.8.0
-pywin32==310
 PyYAML==6.0.2
 rdt==1.17.1
 referencing==0.36.2
@@ -159,7 +160,6 @@ sdmetrics==0.21.0
 sdv==1.24.0
 seaborn==0.13.2
 sentence-transformers==4.1.0
-setuptools==75.9.1
 shapely==2.1.1
 shellingham==1.5.4
 simplejson==3.20.1

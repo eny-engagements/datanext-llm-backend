@@ -2,3 +2,7 @@ terminal_run/*
 terminal_run
 scripts/*
 output/*
+
+my_env
+
+src/user_uploads/*

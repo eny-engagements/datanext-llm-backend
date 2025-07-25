@@ -1,21 +1,18 @@
-import streamlit as st
-
 import os
-import pandas as pd
 import re
-from graphviz import Source, Digraph
 
 import openpyxl
-from openpyxl import load_workbook
-from openpyxl.styles import Alignment, PatternFill
-from openpyxl.drawing.image import Image
-
+import pandas as pd
+import streamlit as st
 import tiktoken
-from langchain_openai import AzureChatOpenAI
+from graphviz import Digraph, Source
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-
+from langchain_openai import AzureChatOpenAI
+from openpyxl import load_workbook
+from openpyxl.drawing.image import Image
+from openpyxl.styles import Alignment, PatternFill
 
 llm = AzureChatOpenAI(
     azure_deployment="gpt-4o",
@@ -23,40 +20,41 @@ llm = AzureChatOpenAI(
     api_key="901cce4a4b4045b39727bf1ce0e36219",
     azure_endpoint="https://aifordata-azureopenai.openai.azure.com/",
     temperature=0,
-    max_tokens=4096
-    )
+    max_tokens=4096,
+)
 
 
 # Set path for executables
-os.environ['PATH'] += os.pathsep + r'C:\Program Files\Graphviz\bin'
+os.environ["PATH"] += os.pathsep + r"C:\Program Files\Graphviz\bin"
 
 
 def filter_table(table):
-    rows = table.strip().split('\n')
+    rows = table.strip().split("\n")
     expected_parts = 15
-    table_new_list = rows[:2]  
+    table_new_list = rows[:2]
 
     filtered_rows = rows[2:]
     for row in filtered_rows[::-1]:
         if "------" in row:
             return table
-        
-        parts = row.split('|')
-        if len(parts) < expected_parts or row.count('|') < expected_parts - 1:
-            filtered_rows.remove(row)        
+
+        parts = row.split("|")
+        if len(parts) < expected_parts or row.count("|") < expected_parts - 1:
+            filtered_rows.remove(row)
         else:
             break
 
     table_new_list.extend(filtered_rows)
-    table_new = '\n'.join(table_new_list)
+    table_new = "\n".join(table_new_list)
     return table_new
+
 
 def process_table(table):
     rows = []
     try:
-        for line in table.strip().split('\n')[2:]:
-            if line.count('|') == 14 or line.count('|') == 15:
-                columns = line.split('|')
+        for line in table.strip().split("\n")[2:]:
+            if line.count("|") == 14 or line.count("|") == 15:
+                columns = line.split("|")
                 row = {
                     "Layer": columns[1].strip(),
                     "Description": columns[2].strip(),
@@ -67,29 +65,38 @@ def process_table(table):
                     "Column Description": columns[7].strip(),
                     "Join Table": columns[8].strip() if columns[8] != "" else "S/B",
                     "Join Column": columns[9].strip() if columns[9] != "" else "S/B",
-                    "Join Statement": columns[10].strip() if columns[10] != "" else "S/B",
+                    "Join Statement": (
+                        columns[10].strip() if columns[10] != "" else "S/B"
+                    ),
                     "Filter Table": columns[11].strip() if columns[11] != "" else "S/B",
-                    "Filter Column": columns[12].strip() if columns[12] != "" else "S/B",
-                    "Filter Statement": columns[13].strip() if columns[13] != "" else "S/B",
-                    "Derivation Purpose": columns[14].strip() if columns[14] != "" else "S/B"
+                    "Filter Column": (
+                        columns[12].strip() if columns[12] != "" else "S/B"
+                    ),
+                    "Filter Statement": (
+                        columns[13].strip() if columns[13] != "" else "S/B"
+                    ),
+                    "Derivation Purpose": (
+                        columns[14].strip() if columns[14] != "" else "S/B"
+                    ),
                 }
                 rows.append(row)
 
         df = pd.DataFrame(rows)
         df_filled = df.replace("S/B", pd.NA)
         df_filled = df_filled.ffill()
-        df_filled['Join Table'] = df_filled['Table'].str.strip('@').str.upper()
-        df_filled['Filter Table'] = df_filled['Table'].str.strip('@').str.upper()
-        df_filled['Table'] = df_filled['Table'].str.strip('@').str.upper()
+        df_filled["Join Table"] = df_filled["Table"].str.strip("@").str.upper()
+        df_filled["Filter Table"] = df_filled["Table"].str.strip("@").str.upper()
+        df_filled["Table"] = df_filled["Table"].str.strip("@").str.upper()
 
         return df, df_filled
 
     except Exception as e:
         st.error(e)
 
+
 def get_glossary(plsql_script, file):
     extract_tables_prompt = PromptTemplate.from_template(
-    """
+        """
     Extract all the source table names from the following stored procedure:
     {plsql}
 
@@ -101,32 +108,35 @@ def get_glossary(plsql_script, file):
 
     extract_tables_chain = runnable | extract_tables_prompt | llm | output_parser
     tables = extract_tables_chain.invoke({"plsql": plsql_script})
-    tables = tables[tables.find(":") + 1:].strip()
+    tables = tables[tables.find(":") + 1 :].strip()
 
     glossary_df = pd.read_excel(file)
     glossary_list = []
     for table in tables.split(", "):
-        plsql_table_glossary = glossary_df[any(re.split(r'[_\.]', table.upper()) in glossary_df['Table Name'])][['Table Name', 'Table Description', 'Column Name', 'Column Description']]
+        plsql_table_glossary = glossary_df[
+            any(re.split(r"[_\.]", table.upper()) in glossary_df["Table Name"])
+        ][["Table Name", "Table Description", "Column Name", "Column Description"]]
         if not plsql_table_glossary.empty:
             glossary_list.append(plsql_table_glossary)
-    
+
     result = ""
     if len(glossary_list) > 0:
         plsql_glossary = pd.concat(glossary_list, ignore_index=True)
-        for table in plsql_glossary['Table Name'].unique():
+        for table in plsql_glossary["Table Name"].unique():
             result += f"{table}\n{plsql_glossary[plsql_glossary['Table Name'] == table]['Table Description'].iloc[0]}\n"
-            columns = plsql_glossary[plsql_glossary['Table Name'] == table]
+            columns = plsql_glossary[plsql_glossary["Table Name"] == table]
             for _, row in columns.iterrows():
                 result += f"{row['Column Name']}: {row['Column Description']}\n"
             result += "\n"
-    
+
     # print(result)
     return result
+
 
 def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
     if dialect == "T-SQL":
         analysis_prompt = PromptTemplate.from_template(
-        """
+            """
         You are a data engineer with expertise in understanding optimized, enterprise-grade PL/SQL procedures with a focus on the BFSI sector. Analyze the provided PL/SQL script 
         which is being used to transform data from source systems build reports in the life insurance domain. Create a thorough and comprehensive table that captures the necessary details for both 
         business analysts and data engineers. Optionally, you may be provided with a business glossary of the source system. Use the business glossary of the data source to augment your analysis.
@@ -201,10 +211,11 @@ def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
         Respond with as many complete rows of the table as you can create. if the table does not contain analysis and documentation of the entire PL/SQL script I will prompt you to continue 
         and then you will continue populating the table. Do not include introductions, labels, backticks and conclusions. Only respond with the table. Each row of the table should end with a newline character.
         If the analysis is complete for the entire stored procedure and the table is complete, do not start over from the beginning and end with ------. 
-        """)
+        """
+        )
 
         continue_analysis_prompt = PromptTemplate.from_template(
-        """
+            """
         You are a data engineer with expertise in understanding optimized, enterprise-grade PL/SQL procedures with a focus on the BFSI sector. You were tasked with analyzing the 
         provided PL/SQL script which is being used to build reports in the life insurance domain. You created part of a thorough and comprehensive table that captures the 
         necessary details for both business analysts and data engineers by analysing the PL/SQL script and augmenting your analysis with the business glossary of the data source. The table includes 
@@ -282,11 +293,12 @@ def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
         Perform a complete analysis. Perform the documentation thoroughly. Do not include introductions, labels, backticks and conclusions. Dont include headers. Only respond with the new 
         rows of the table. Each row should end with a newline character. If the table is complete or has nearly been completed, i.e only one to three rows are remaining, respond with the remaining 
         rows if any, do not start over and end your response with ------.
-        """)
-    
+        """
+        )
+
     if dialect == "Spark SQL":
         analysis_prompt = PromptTemplate.from_template(
-        """        
+            """        
         You are a data engineer with expertise in understanding optimized, enterprise-grade Spark SQL and PySpark transformations with a focus on the BFSI sector. Analyze the provided Spark SQL or PySpark script which is being used to
         transform data from source systems to build reports in the life insurance domain. Create a thorough and comprehensive table that captures the necessary details for both business analysts and data engineers. Optionally, you may 
         be provided with a business glossary of the source system. Use the business glossary of the data source to augment your analysis. The table should include information about multiple layers of transformations, tables and columns 
@@ -359,10 +371,11 @@ def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
         this documentation is highly critical. Perform as much of the analysis as you can. Respond with as many complete rows of the table as you can create. if the table does not contain analysis and documentation of the entire Spark SQL 
         script, I will prompt you to continue and then you will continue populating the table. Do not include introductions, labels, backticks and conclusions. Only respond with the table. Each row of the table should end with a newline 
         character. If the analysis is complete for the entire stored procedure and the table is complete, do not start over from the beginning and end with ------. 
-        """)
+        """
+        )
 
         continue_analysis_prompt = PromptTemplate.from_template(
-        """ 
+            """ 
         You are a data engineer with expertise in understanding optimized, enterprise-grade Spark SQL and PySpark transformations with a focus on the BFSI sector. You were tasked with analyzing the provided Spark SQL/PySpark script which 
         is being used to build reports in the life insurance domain. You created part of a thorough and comprehensive table that captures the necessary details for both business analysts and data engineers by analysing the Spark SQL/PySpark 
         script and augmenting your analysis with the business glossary of the data source. The table includes information about multiple layers of transformations, tables/DataFrames and columns involved in each section, data types, key constraints, 
@@ -442,7 +455,7 @@ def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
     runnable = RunnablePassthrough()
     output_parser = StrOutputParser()
 
-    chain = runnable | analysis_prompt | llm | output_parser 
+    chain = runnable | analysis_prompt | llm | output_parser
     continue_chain = runnable | continue_analysis_prompt | llm | output_parser
 
     table = chain.invoke({"plsql_script": plsql_script, "context": context})
@@ -451,25 +464,40 @@ def analyse_sp(plsql_script, context="N/A", dialect="T-SQL"):
     tokens = encoding.encode(table)
     plsql_tokens = encoding.encode(plsql_script)
 
-    while "------" not in table.strip().split('\n')[-1] and len(tokens) + len(plsql_tokens) < 80000:
+    while (
+        "------" not in table.strip().split("\n")[-1]
+        and len(tokens) + len(plsql_tokens) < 80000
+    ):
         table = filter_table(table)
-        continued_table = continue_chain.invoke({"table": table, "plsql_script": plsql_script, "context": context}) 
+        continued_table = continue_chain.invoke(
+            {"table": table, "plsql_script": plsql_script, "context": context}
+        )
         continued_table = filter_table(continued_table)
         table += f"\n{continued_table}"
 
-        if "---" in table.strip().split('\n')[-1]:
+        if "---" in table.strip().split("\n")[-1]:
             break
 
         tokens = encoding.encode(table)
-    
+
     df, df_filled = process_table(table)
     return df, df_filled
-    
+
+
 def visualise_etl(plsql_script, report_name, df):
-    df = df.drop(columns=['Description', 'Table Description', 'Data Type', 'Column Description', 'Join Statement', 'Filter Statement'])
+    df = df.drop(
+        columns=[
+            "Description",
+            "Table Description",
+            "Data Type",
+            "Column Description",
+            "Join Statement",
+            "Filter Statement",
+        ]
+    )
     documentation = df.to_string(index=False, header=True)
     diagram_prompt = PromptTemplate.from_template(
-    """
+        """
     You will carefully analyse a detailed documentation of a stored procedure given below in a tabular format and accurately determine the table level data flow. You will then generate
     the graphviz source code for a data lineage diagram. You will create a single legend composed of a numbered list of the derivation purposes by analysing the entities involved in a 
     particular set of derivations detailed under "Derivation Purpose" in the documentation. For more context, "Table" refers to the entity being derived and "Join Table" as well as "Filter
@@ -554,10 +582,11 @@ def visualise_etl(plsql_script, report_name, df):
 
     Do not include introductions, explanations, backticks, labels or conclusions in your response. Respond with the complete graphviz source code 
     for the diagram.
-    """)
+    """
+    )
 
     continue_diagram_prompt = PromptTemplate.from_template(
-    """
+        """
     Earlier you had carefully analysed the stored procedure and its documentation provided to you and accurately determined the table level data flow. You utilised this analysis to generate 
     a portion of a graphviz source code for a lineage diagram. 
 
@@ -651,10 +680,11 @@ def visualise_etl(plsql_script, report_name, df):
 
     Do not include introductions, explanations, backticks, labels or conclusions in your response. Respond only with the remaining graphviz source
     code for the diagram. If the code for the diagram is close to completion, respond with the few remaining lines and ensure you end the code with }}.
-    """)
+    """
+    )
 
     fix_code_prompt = PromptTemplate.from_template(
-    """ 
+        """ 
     You are an expert graphviz coder. Your task is to debug the following code and fix syntax errors in it by understanding 
     its purpose and the error encountered on rendering a digram from a source object of this code:
     {code}
@@ -673,24 +703,32 @@ def visualise_etl(plsql_script, report_name, df):
     continue_diagram_chain = runnable | continue_diagram_prompt | llm | output_parser
     fix_code_chain = runnable | fix_code_prompt | llm | output_parser
 
-    graphviz_code = diagram_chain.invoke({
-        "plsql_script":plsql_script, 
-        "etl_documentation":documentation
-    })
-    graphviz_code = graphviz_code.replace("```plaintext", "").replace("```graphviz", "").replace("```dot", "").strip("```").strip()
+    graphviz_code = diagram_chain.invoke(
+        {"plsql_script": plsql_script, "etl_documentation": documentation}
+    )
+    graphviz_code = (
+        graphviz_code.replace("```plaintext", "")
+        .replace("```graphviz", "")
+        .replace("```dot", "")
+        .strip("```")
+        .strip()
+    )
 
     encoding = tiktoken.get_encoding("cl100k_base")
-    tokens = encoding.encode(graphviz_code) 
+    tokens = encoding.encode(graphviz_code)
     documentation_tokens = encoding.encode(documentation)
 
     lines_context = []
     graphviz_code_context = ""
-    while graphviz_code.rfind('}') != len(graphviz_code) - 1 and len(tokens) + len(documentation_tokens) < 116800:
-    # while not graphviz_code.endswith("}\n}") and len(tokens) + len(documentation_tokens) < 116800:
-        lines = graphviz_code.split('\n')
+    while (
+        graphviz_code.rfind("}") != len(graphviz_code) - 1
+        and len(tokens) + len(documentation_tokens) < 116800
+    ):
+        # while not graphviz_code.endswith("}\n}") and len(tokens) + len(documentation_tokens) < 116800:
+        lines = graphviz_code.split("\n")
         if ">]" not in lines[-1]:
             lines.pop()
-            while len(lines) > 0 and lines[-1] == lines[-2]: 
+            while len(lines) > 0 and lines[-1] == lines[-2]:
                 lines.pop()
             if lines_context == []:
                 for i, line in enumerate(lines):
@@ -698,32 +736,52 @@ def visualise_etl(plsql_script, report_name, df):
                         lines_context = lines[i:]
         else:
             lines.append("}")
-            graphviz_code = '\n'.join(lines)
+            graphviz_code = "\n".join(lines)
             break
-        
-        graphviz_code = '\n'.join(lines)
+
+        graphviz_code = "\n".join(lines)
         if lines_context != [] and graphviz_code_context == "":
-            graphviz_code_context = '\n'.join(lines_context)
+            graphviz_code_context = "\n".join(lines_context)
 
         if 116800 - (len(tokens) + len(documentation_tokens)) < 6000:
-            num_rows_remove = int((126800 - (len(tokens) + len(documentation_tokens)))/100)
+            num_rows_remove = int(
+                (126800 - (len(tokens) + len(documentation_tokens))) / 100
+            )
             if df.shape[0] > 0 and df.shape[0] > num_rows_remove:
                 df = df.iloc[num_rows_remove:]
                 documentation = df.to_string(index=False, header=True)
                 documentation_tokens = encoding.encode(documentation)
             else:
                 continue
-        
-        continued_graphviz_code = continue_diagram_chain.invoke({
-            "plsql_script": plsql_script, 
-            "graphviz_code":graphviz_code_context if graphviz_code_context != "" else graphviz_code, 
-            "etl_documentation":documentation
-        })
+
+        continued_graphviz_code = continue_diagram_chain.invoke(
+            {
+                "plsql_script": plsql_script,
+                "graphviz_code": (
+                    graphviz_code_context
+                    if graphviz_code_context != ""
+                    else graphviz_code
+                ),
+                "etl_documentation": documentation,
+            }
+        )
         graphviz_code += f"\n{continued_graphviz_code}"
         if graphviz_code_context != "":
             graphviz_code_context = f"\n{continued_graphviz_code}"
-        graphviz_code = graphviz_code.replace("```plaintext", "").replace("```graphviz", "").replace("```dot", "").strip("```").strip()
-        graphviz_code_context = graphviz_code_context.replace("```plaintext", "").replace("```graphviz", "").replace("```dot", "").strip("```").strip()
+        graphviz_code = (
+            graphviz_code.replace("```plaintext", "")
+            .replace("```graphviz", "")
+            .replace("```dot", "")
+            .strip("```")
+            .strip()
+        )
+        graphviz_code_context = (
+            graphviz_code_context.replace("```plaintext", "")
+            .replace("```graphviz", "")
+            .replace("```dot", "")
+            .strip("```")
+            .strip()
+        )
         if graphviz_code_context != "":
             tokens = encoding.encode(graphviz_code_context)
         else:
@@ -794,42 +852,59 @@ def visualise_etl(plsql_script, report_name, df):
             </TABLE>
         >]
     """
-    graphviz_code = graphviz_code[:index+1] + legend + graphviz_code[index+1:]
+    graphviz_code = graphviz_code[: index + 1] + legend + graphviz_code[index + 1 :]
 
     LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:/EY/ey-genai-datanext-frontend/public"
     if not os.path.exists(LINEAGE_EXTRACTOR_OUTPUT_DIR):
         os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR)
-    
-    with open(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "").replace(".sql", "")}_Lineage_Diagram_Code.txt", 'w') as f:
+
+    with open(
+        f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '').replace('.sql', '')}_Lineage_Diagram_Code.txt",
+        "w",
+    ) as f:
         f.write(graphviz_code)
 
-    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "").replace(".sql", "")}_Lineage_Diagram"
-    diagram = Source(graphviz_code, engine='dot')
+    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '').replace('.sql', '')}_Lineage_Diagram"
+    diagram = Source(graphviz_code, engine="dot")
 
     error = True
     i = 0
-    while i < 5 and error:    
+    while i < 5 and error:
         try:
-            with open(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace(".txt", "")}_Lineage_Diagram_Code.txt", 'w') as f:
+            with open(
+                f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '')}_Lineage_Diagram_Code.txt",
+                "w",
+            ) as f:
                 f.write(graphviz_code)
-            diagram = Source(graphviz_code, engine='dot')
-            diagram.render(image_path, format='png', view=False, cleanup=True)
+            diagram = Source(graphviz_code, engine="dot")
+            diagram.render(image_path, format="png", view=False, cleanup=True)
             image_path = f"{image_path}.png"
             return image_path
         except Exception as e:
             i += 1
             graphviz_code = fix_code_chain.invoke({"code": graphviz_code, "error": e})
-            graphviz_code = graphviz_code.replace("```plaintext", "").replace("```graphviz", "").replace("```dot", "").strip("```").strip()
+            graphviz_code = (
+                graphviz_code.replace("```plaintext", "")
+                .replace("```graphviz", "")
+                .replace("```dot", "")
+                .strip("```")
+                .strip()
+            )
             continue
 
+
 def create_etl_documentation_excel(df, report_name):
-    workbook_name = report_name.replace(".txt", "_ETL_Documentation.xlsx").replace(".sql", "_ETL_Documentation.xlsx")
+    workbook_name = report_name.replace(".txt", "_ETL_Documentation.xlsx").replace(
+        ".sql", "_ETL_Documentation.xlsx"
+    )
     sheet_name = "Analysis"
     LINEAGE_EXTRACTOR_OUTPUT_DIR = "C:/EY/ey-genai-datanext-frontend/public"
     if not os.path.exists(LINEAGE_EXTRACTOR_OUTPUT_DIR):
         os.makedirs(LINEAGE_EXTRACTOR_OUTPUT_DIR)
 
-    with pd.ExcelWriter(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}", mode='w', engine='openpyxl') as writer:
+    with pd.ExcelWriter(
+        f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}", mode="w", engine="openpyxl"
+    ) as writer:
         df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     wb = load_workbook(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}")
@@ -841,60 +916,70 @@ def create_etl_documentation_excel(df, report_name):
         start_row = 2
         for row in range(2, max_row + 1):
             current_value = ws.cell(row=row, column=col).value
-            previous_value = ws.cell(row=row-1, column=col).value
+            previous_value = ws.cell(row=row - 1, column=col).value
 
             if current_value == previous_value:
                 continue
             else:
                 if row - start_row > 1:
-                    ws.merge_cells(start_row=start_row, start_column=col, end_row=row-1, end_column=col)
+                    ws.merge_cells(
+                        start_row=start_row,
+                        start_column=col,
+                        end_row=row - 1,
+                        end_column=col,
+                    )
                 start_row = row
 
         if max_row - start_row >= 1:
-            ws.merge_cells(start_row=start_row, start_column=col, end_row=max_row, end_column=col)
+            ws.merge_cells(
+                start_row=start_row, start_column=col, end_row=max_row, end_column=col
+            )
 
-    header_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    header_fill = PatternFill(
+        start_color="FFFF00", end_color="FFFF00", fill_type="solid"
+    )
     for cell in ws[1]:
         cell.fill = header_fill
 
     for row in ws.iter_rows():
         for cell in row:
-            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        
+            cell.alignment = Alignment(
+                horizontal="center", vertical="center", wrap_text=True
+            )
+
     for col in ws.iter_cols(min_col=1, max_col=max_col, min_row=2, max_row=max_row):
         col_letter = col[0].column_letter
-        if col_letter == 'J' or col_letter == 'M':
+        if col_letter == "J" or col_letter == "M":
             ws.column_dimensions[col_letter].width = 30
         else:
             ws.column_dimensions[col_letter].width = 15
 
-    
-    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '').replace(".sql", "")}_Lineage_Diagram.png"
+    image_path = f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{report_name.replace('.txt', '').replace('.sql', '')}_Lineage_Diagram.png"
     if os.path.exists(image_path):
-        ws = wb.create_sheet('Lineage Visualisation')
+        ws = wb.create_sheet("Lineage Visualisation")
         image = Image(image_path)
-        ws.add_image(image, 'A1')
+        ws.add_image(image, "A1")
 
     wb.save(f"{LINEAGE_EXTRACTOR_OUTPUT_DIR}/{workbook_name}")
 
 
 # Streamlit Interface
-if 'plsql_path' not in st.session_state:
-    st.session_state['plsql_path'] = ""
-if 'report_name' not in st.session_state:
-    st.session_state['report_name'] = None
-if 'plsql_script' not in st.session_state:
-    st.session_state['plsql_script'] = None
-if 'plsql_dialect' not in st.session_state:
-    st.session_state['plsql_dialect'] = None
-if 'context_for_plsql' not in st.session_state:
-    st.session_state['context_for_plsql'] = ""
-if 'table_raw' not in st.session_state:
-    st.session_state['table_raw'] = None
-if 'table' not in st.session_state:
-    st.session_state['table'] = None
-if 'image_path' not in st.session_state:
-    st.session_state['image_path'] = None
+if "plsql_path" not in st.session_state:
+    st.session_state["plsql_path"] = ""
+if "report_name" not in st.session_state:
+    st.session_state["report_name"] = None
+if "plsql_script" not in st.session_state:
+    st.session_state["plsql_script"] = None
+if "plsql_dialect" not in st.session_state:
+    st.session_state["plsql_dialect"] = None
+if "context_for_plsql" not in st.session_state:
+    st.session_state["context_for_plsql"] = ""
+if "table_raw" not in st.session_state:
+    st.session_state["table_raw"] = None
+if "table" not in st.session_state:
+    st.session_state["table"] = None
+if "image_path" not in st.session_state:
+    st.session_state["image_path"] = None
 
 st.set_page_config(
     layout="wide",
@@ -902,9 +987,11 @@ st.set_page_config(
     page_icon="📝",
 )
 
-st.subheader("Automatic Data Lineage and Pipeline Analysis of Stored Procedures alongwith Lineage Visualisation using AI 📝")
+st.subheader(
+    "Automatic Data Lineage and Pipeline Analysis of Stored Procedures alongwith Lineage Visualisation using AI 📝"
+)
 st.markdown(
-"""
+    """
 The accelerator supports teams by automating the analysis and documentation of Extractions, Transformations and Loading (ETL) operations
 being performed within a Stored Procedure using Large Language Models. It accepts the path to a text file containing the source code of the 
 stored procedure within it and optionally a business glossary of the source and target systems which enhances the Large Language Model's 
@@ -916,18 +1003,24 @@ operations, determines the business purpose of the transformations and describes
 which visualises the lineage of the entities in the stored procedure. The workbook can be found in the **output/etl documentation** directory.
 
 ----
-""")
+"""
+)
 
 plsql_path = st.text_input("Enter the path to the stored procedure:")
-st.session_state['plsql_path'] = plsql_path.strip('"')
-st.session_state['report_name'] = os.path.basename(st.session_state['plsql_path'])
+st.session_state["plsql_path"] = plsql_path.strip('"')
+st.session_state["report_name"] = os.path.basename(st.session_state["plsql_path"])
 
-if st.session_state['plsql_path'] != "":
-    if st.session_state['plsql_path'].split('.')[-1] == "txt" or st.session_state['plsql_path'].split('.')[-1] == "sql":
-        for encoding in ['utf-8', 'utf-16']:
+if st.session_state["plsql_path"] != "":
+    if (
+        st.session_state["plsql_path"].split(".")[-1] == "txt"
+        or st.session_state["plsql_path"].split(".")[-1] == "sql"
+    ):
+        for encoding in ["utf-8", "utf-16"]:
             try:
-                with open(st.session_state['plsql_path'], 'r', encoding=encoding) as plsql_script_file:
-                    st.session_state['plsql_script'] = plsql_script_file.read()
+                with open(
+                    st.session_state["plsql_path"], "r", encoding=encoding
+                ) as plsql_script_file:
+                    st.session_state["plsql_script"] = plsql_script_file.read()
                 break
             except:
                 continue
@@ -935,42 +1028,55 @@ if st.session_state['plsql_path'] != "":
         st.info("Not a valid file")
 
 plsql_dialect = st.selectbox("Choose dialect", ["T-SQL", "Spark SQL"])
-st.session_state['plsql_dialect'] = plsql_dialect
+st.session_state["plsql_dialect"] = plsql_dialect
 
 context_for_plsql = st.text_area("Provide additional context for the stored procedure")
 if context_for_plsql.strip() is not None:
-    st.session_state['context_for_plsql'] += context_for_plsql.strip()
+    st.session_state["context_for_plsql"] += context_for_plsql.strip()
 
 glossary_file = st.file_uploader("Upload a Business Glossary", type=["xlsx"])
-if glossary_file and st.session_state['plsql_script'] is not None:
-    st.session_state['context_for_plsql'] += "\n\nBusiness Glossary:\n" + get_glossary(st.session_state['plsql_script'], glossary_file)
+if glossary_file and st.session_state["plsql_script"] is not None:
+    st.session_state["context_for_plsql"] += "\n\nBusiness Glossary:\n" + get_glossary(
+        st.session_state["plsql_script"], glossary_file
+    )
 
-if st.session_state['plsql_script'] is not None and st.session_state['plsql_dialect'] is not None:
+if (
+    st.session_state["plsql_script"] is not None
+    and st.session_state["plsql_dialect"] is not None
+):
     if st.button("Analyse"):
         with st.spinner("Analysing the stored procedure"):
-            df, df_filled = analyse_sp(st.session_state['plsql_script'], st.session_state['context_for_plsql'], st.session_state['plsql_dialect'])
-            st.session_state['table'] = df_filled
-            st.session_state['table_raw'] = df
-            st.dataframe(st.session_state['table'])
+            df, df_filled = analyse_sp(
+                st.session_state["plsql_script"],
+                st.session_state["context_for_plsql"],
+                st.session_state["plsql_dialect"],
+            )
+            st.session_state["table"] = df_filled
+            st.session_state["table_raw"] = df
+            st.dataframe(st.session_state["table"])
 
-if st.session_state['table_raw'] is not None:
+if st.session_state["table_raw"] is not None:
     if st.button("Visualise Data Lineage"):
         with st.spinner("Generating Lineage Diagram"):
             try:
-                image_path = visualise_etl(st.session_state['plsql_script'], st.session_state['report_name'], st.session_state['table_raw'])
+                image_path = visualise_etl(
+                    st.session_state["plsql_script"],
+                    st.session_state["report_name"],
+                    st.session_state["table_raw"],
+                )
                 st.image(image_path, caption="Lineage Visualisation")
-                st.session_state['image_path'] = image_path
+                st.session_state["image_path"] = image_path
             except Exception as e:
                 st.error(f"An error occured! Please try again -> {e}")
 
-    if st.button("Get Excel Sheet") and st.session_state['table'] is not None:
+    if st.button("Get Excel Sheet") and st.session_state["table"] is not None:
         with st.spinner("Creating Excel Sheet"):
             try:
-                create_etl_documentation_excel(st.session_state['table'], st.session_state['report_name'])
+                create_etl_documentation_excel(
+                    st.session_state["table"], st.session_state["report_name"]
+                )
                 st.success("Excel sheet successfully saved in the local directory!")
             except Exception as e:
-                st.error(f"The documentation could not be generated! Please try again -> {e}")
-
-     
-
-    
+                st.error(
+                    f"The documentation could not be generated! Please try again -> {e}"
+                )
