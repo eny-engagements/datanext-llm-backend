@@ -28,8 +28,8 @@ gpt4o = AzureChatOpenAI(
 )
 
 hf_embeddings = HuggingFaceEmbeddings(
-    model_name="all-mpnet-base-v2",
-    model_kwargs={"device": "cpu", "trust_remote_code": True},
+    model_name="sentence-transformers/all-mpnet-base-v2",
+    model_kwargs={"trust_remote_code": True},
 )
 
 
