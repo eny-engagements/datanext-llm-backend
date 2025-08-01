@@ -263,14 +263,14 @@ def create_business_glossary_excel(schema_name, glossary):
         ],
     )
     schema_df.to_excel(
-        f"./output/business glossary/{business_glossary_file_path}",
+        f"./output/business_glossary/{business_glossary_file_path}",
         sheet_name=sheet_name,
         index=False,
     )
     # ----------------------------------
 
     workbook = load_workbook(
-        f"./output/business glossary/{business_glossary_file_path}"
+        f"./output/business_glossary/{business_glossary_file_path}"
     )
     sheet = workbook[sheet_name]
 
@@ -313,7 +313,7 @@ def create_business_glossary_excel(schema_name, glossary):
     for cell in sheet[1]:
         cell.fill = header_fill
 
-    workbook.save(f"./output/business glossary/{business_glossary_file_path}")
+    workbook.save(f"./output/business_glossary/{business_glossary_file_path}")
 
 
 # Streamlit Interface
@@ -353,7 +353,7 @@ path to any excel sheet containing a list of table names and column names and a 
 may include further specifications regarding updates and naming conventions. The accelerator relies on a RAG pipeline to a knowledge 
 base and a Large Language Model.
 
-The outcome is an excel sheet containing table and column descriptions, which can be found in the **output/business glossary** directory.
+The outcome is an excel sheet containing table and column descriptions, which can be found in the **output/business_glossary** directory.
 
 ----
 """
@@ -385,7 +385,7 @@ if schema_path and schema_description:
                     )
                     st.session_state["glossary_continuation"] = f"  \n{glossary}"
                     with open(
-                        f"./output/business glossary/{schema_name.replace('.xlsx', 'Business Glossary.txt')}",
+                        f"./output/business_glossary/{schema_name.replace('.xlsx', 'Business Glossary.txt')}",
                         "a",
                     ) as text_file:
                         text_file.write(st.session_state["glossary_continuation"])

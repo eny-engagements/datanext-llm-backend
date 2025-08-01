@@ -3,7 +3,7 @@ terminal_run
 scripts/*
 output/*
 poc/*
-
+venv
 my_env
 
 src/user_uploads/*
