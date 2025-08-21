@@ -2,7 +2,7 @@ Okay, I'll help you transform your `README.md` into the desired format, incorpor
 
 Here's the revamped `README.md`:
 
------
+---
 
 # 🚀 DataNext LLM Backend
 
@@ -35,17 +35,17 @@ datanext-llm-backend/
 │── requirements.txt          # Python dependencies
 ```
 
------
+---
 
 ## ⚡ Features
 
-  - **FastAPI Backend**: Provides a robust and asynchronous API interface.
-  - **LangChain & LangGraph Integration**: Leverages the power of LangChain for LLM interactions and LangGraph for building stateful, multi-step AI agents.
-  - **Modular Architecture**: Easily extensible for new AI-powered modules and use cases.
-  - **Dynamic Workflows**: Supports complex conversational flows and data processing pipelines.
-  - **File Upload Support**: Handles file uploads for AI analysis and processing.
+- **FastAPI Backend**: Provides a robust and asynchronous API interface.
+- **LangChain & LangGraph Integration**: Leverages the power of LangChain for LLM interactions and LangGraph for building stateful, multi-step AI agents.
+- **Modular Architecture**: Easily extensible for new AI-powered modules and use cases.
+- **Dynamic Workflows**: Supports complex conversational flows and data processing pipelines.
+- **File Upload Support**: Handles file uploads for AI analysis and processing.
 
------
+---
 
 ## 📦 Installation (Running Locally)
 
@@ -71,7 +71,7 @@ my_env\Scripts\activate     # For Windows
 pip install -r requirements.txt
 ```
 
------
+---
 
 ## 🔑 Environment Variables
 
@@ -86,7 +86,7 @@ DATANEXT_HOST=datanext-backend-host-base-url # Replace with your actual host if 
 DATANEXT_AGENT_KEY=datanext-agent-key # Replace with your actual agent key if needed
 ```
 
------
+---
 
 ## 4️⃣ Running the Application Locally
 
@@ -98,7 +98,7 @@ uvicorn src.main:app --reload
 
 The application will be accessible at `http://127.0.0.1:8000`. The API documentation (Swagger UI) can be found at `http://127.0.0.1:8000/docs`.
 
------
+---
 
 ## 💡 How to Interact with the API (Example Workflow)
 
@@ -109,51 +109,51 @@ This example demonstrates how to use the API to create a glossary from an Excel 
 
 2.  **Start a New Session**:
 
-      * Expand the **`GET /new_session`** endpoint.
-      * Click "Try it out" and then "Execute".
-      * Copy the `session_id` from the response. This ID will link your subsequent interactions.
+    - Expand the **`GET /new_session`** endpoint.
+    - Click "Try it out" and then "Execute".
+    - Copy the `session_id` from the response. This ID will link your subsequent interactions.
 
 3.  **Initiate Chat for Glossary Creation**:
 
-      * Expand the **`POST /chat`** endpoint.
-      * Click "Try it out".
-      * In the "Request body" field, enter the following JSON (replace `your-session-id` with the one you copied):
-        ```json
-        {
-          "session_id": "your-session-id",
-          "message": "I want to create a glossary from Excel."
-        }
-        ```
-      * Click "Execute". The AI will respond, prompting you to upload the file.
+    - Expand the **`POST /chat`** endpoint.
+    - Click "Try it out".
+    - In the "Request body" field, enter the following JSON (replace `your-session-id` with the one you copied):
+      ```json
+      {
+        "session_id": "your-session-id",
+        "message": "I want to create a glossary from Excel."
+      }
+      ```
+    - Click "Execute". The AI will respond, prompting you to upload the file.
 
 4.  **Upload Your Excel File**:
 
-      * Expand the **`POST /upload/{session_id}`** endpoint.
-      * Click "Try it out".
-      * Paste your `session_id` into the `session_id` **path parameter** field.
-      * An input field for a file will appear. Click **"Choose File"** and select your `schema.xlsx` (or any other Excel file).
-      * Click "Execute". The response will provide the server-side path where your file is stored, for example:
-        ```json
-        {
-          "server_path": "user_uploads/your-session-id/schema.xlsx"
-        }
-        ```
-        **Note**: On Windows, the path might use backslashes (`\`) like `user_uploads\your-session-id\schema.xlsx`. Make sure to use the path exactly as returned by the API.
+    - Expand the **`POST /upload/{session_id}`** endpoint.
+    - Click "Try it out".
+    - Paste your `session_id` into the `session_id` **path parameter** field.
+    - An input field for a file will appear. Click **"Choose File"** and select your `schema.xlsx` (or any other Excel file).
+    - Click "Execute". The response will provide the server-side path where your file is stored, for example:
+      ```json
+      {
+        "server_path": "user_uploads/your-session-id/schema.xlsx"
+      }
+      ```
+      **Note**: On Windows, the path might use backslashes (`\`) like `user_uploads\your-session-id\schema.xlsx`. Make sure to use the path exactly as returned by the API.
 
 5.  **Continue Chat with File Path**:
 
-      * Go back to the **`POST /chat`** endpoint.
-      * Click "Try it out".
-      * In the "Request body" field, send your next message, including the `server_path` you received from the upload step (again, replace `your-session-id` and `server_path` with your actual values):
-        ```json
-        {
-          "session_id": "your-session-id",
-          "message": "I have uploaded the file. The path is user_uploads/your-session-id/schema.xlsx. The schema is for finance."
-        }
-        ```
-      * Click "Execute". The AI will now process your request using the uploaded file.
+    - Go back to the **`POST /chat`** endpoint.
+    - Click "Try it out".
+    - In the "Request body" field, send your next message, including the `server_path` you received from the upload step (again, replace `your-session-id` and `server_path` with your actual values):
+      ```json
+      {
+        "session_id": "your-session-id",
+        "message": "I have uploaded the file. The path is user_uploads/your-session-id/schema.xlsx. The schema is for finance."
+      }
+      ```
+    - Click "Execute". The AI will now process your request using the uploaded file.
 
------
+---
 
 ## 🚀 Deploying on a Server Using Docker (for the very first time)
 
@@ -195,13 +195,13 @@ To deploy the application on a server, follow these steps:
     docker run -d --name datanext-llm-backend -p 8000:8000 datanext-llm-backend
     ```
 
------
+---
 
 ## 🛠 API Endpoints
 
 The API provides various endpoints based on the available modules and use cases. Refer to the interactive Swagger UI at `http://127.0.0.1:8000/docs` for detailed API usage, request schemas, and response examples.
 
------
+---
 
 ## 🧪 Running Tests
 
@@ -211,7 +211,7 @@ To execute the unit and integration tests for the project:
 pytest tests/
 ```
 
------
+---
 
 ## 🤝 Contributing
 
@@ -237,4 +237,23 @@ We welcome contributions\! Please follow these steps:
     ```
 5.  Open a Pull Request (PR) to the `main` branch.
 
------
+---
+
+## 📂 Environment Variables
+
+Below is a list of required environment variables for this backend application:
+
+```env
+# 🔑 LLM Provider Configuration (Azure OpenAI)
+AZURE_OPENAI_ENDPOINT=your-azure-openai-endpoint
+AZURE_OPENAI_API_KEY=your-azure-api-key
+AZURE_OPENAI_API_VERSION="2024-02-15-preview"
+OPENAI_DEPLOYMENT_NAME="gpt-4o"
+
+# ⚙️ LLM Runtime Settings
+LLM_TEMPERATURE=0.0
+LLM_MAX_TOKENS=4096
+
+# 🌐 Application & Frontend
+FRONTEND_REPO_NAME=datanext-frontend
+```
